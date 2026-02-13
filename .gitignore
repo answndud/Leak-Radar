@@ -1,0 +1,50 @@
+# Secrets / private configs
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.jks
+*.keystore
+**/credentials.json
+**/secrets.*
+
+# Dependency directories
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+build/
+coverage/
+**/.turbo/
+**/.cache/
+**/.vite/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local databases
+*.sqlite
+*.sqlite3
+
+# Docs (per request)
+AGENTS.md
+CONCEPTS.md
+DESIGN.md
+PROGRESS.md
