@@ -13,6 +13,9 @@
 *.keystore
 **/credentials.json
 **/secrets.*
+.opencode/skills
+
+
 
 # Dependency directories
 node_modules/
@@ -48,3 +51,5 @@ AGENTS.md
 CONCEPTS.md
 DESIGN.md
 PROGRESS.md
+
+opencode.json
