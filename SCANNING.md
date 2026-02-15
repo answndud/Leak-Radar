@@ -42,6 +42,9 @@
 - `GET /internal/worker-status`
   - 결과: 워커 보관 정책/레이트리밋 상태 스냅샷
 
+- `GET /internal/slo`
+  - 결과: SLO 임계치/현재값/준수여부(JSON)
+
 - `GET /internal/metrics`
   - 결과: Prometheus 형식 메트릭 (보관 정책/레이트리밋)
   - 포함 지표: cycle count/duration, 자동·수동 삽입건, 수동 job 오류건
@@ -49,9 +52,12 @@
   - 파생 지표: auto/manual error ratio, status age(ms)
   - 파생 지표: auto insert ratio(최근 처리 대비 삽입 비율)
   - 룰셋 버전 지표: `leak_worker_detection_ruleset_info{version=...}`
+  - SLO 지표: `leak_worker_slo_status_freshness_met`, `leak_worker_slo_auto_error_ratio_met`, `leak_worker_slo_overall_met`
   - 연동 예시: `OBSERVABILITY.md`
   - Alert 프로파일: local/staging/production 룰 파일 제공
   - Alertmanager 라우팅 예시: `infra/monitoring/alertmanager.routes.leak-radar.yml`
+  - production critical 알림은 PagerDuty + ticket webhook 자동 액션 사용
+  - ticket webhook payload schema/example 제공 (`infra/monitoring/ticket-webhook.*`)
 
 - `POST /scan-schedules/:id/toggle`
   - Body: `{ "enabled": true }`

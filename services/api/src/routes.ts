@@ -3,6 +3,7 @@ import {
   AI_PROVIDER_IDS,
   DETECTION_RULESET_VERSION,
   type LeakQuery,
+  type WorkerSloStatus,
   type WorkerRuntimeStatus
 } from "@leak/shared";
 import {
@@ -57,6 +58,48 @@ const defaultDeps: RoutesDeps = {
   getWorkerRuntimeStatus
 };
 
+const STATUS_AGE_SLO_MAX_MS = 300000;
+const AUTO_ERROR_RATIO_SLO_MAX = 0.3;
+
+const buildSloStatus = (status: WorkerRuntimeStatus): WorkerSloStatus => {
+  const autoWorkload =
+    status.pipeline.lastAutoEventsJobs +
+    status.pipeline.lastAutoBackfillCodeItems +
+    status.pipeline.lastAutoBackfillCommitItems;
+
+  const autoInsertRatio = autoWorkload > 0
+    ? status.pipeline.lastAutoInserted / autoWorkload
+    : 0;
+  const autoErrorRatio = autoWorkload > 0
+    ? status.pipeline.lastAutoErrors / autoWorkload
+    : 0;
+  const manualErrorRatio = status.pipeline.lastManualJobsProcessed > 0
+    ? status.pipeline.lastManualJobsErrored / status.pipeline.lastManualJobsProcessed
+    : 0;
+  const updatedAtMs = status.rateLimit.updatedAt ? Date.parse(status.rateLimit.updatedAt) : NaN;
+  const statusAgeMs = Number.isNaN(updatedAtMs) ? -1 : Math.max(0, Date.now() - updatedAtMs);
+  const statusFreshnessMet = statusAgeMs >= 0 && statusAgeMs < STATUS_AGE_SLO_MAX_MS;
+  const autoErrorRatioMet = autoErrorRatio < AUTO_ERROR_RATIO_SLO_MAX;
+
+  return {
+    thresholds: {
+      statusAgeMsMax: STATUS_AGE_SLO_MAX_MS,
+      autoErrorRatioMax: AUTO_ERROR_RATIO_SLO_MAX
+    },
+    values: {
+      statusAgeMs,
+      autoErrorRatio,
+      autoInsertRatio,
+      manualErrorRatio
+    },
+    met: {
+      statusFreshness: statusFreshnessMet,
+      autoErrorRatio: autoErrorRatioMet,
+      overall: statusFreshnessMet && autoErrorRatioMet
+    }
+  };
+};
+
 const parseQuery = (query: Record<string, unknown>): LeakQuery => ({
   provider: typeof query.provider === "string" ? query.provider : undefined,
   sort: query.sort === "oldest" ? "oldest" : "newest",
@@ -90,23 +133,16 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
   app.get("/leaderboard", async () => ({ data: await resolvedDeps.listLeaderboard() }));
   app.get("/activity", async () => ({ data: await resolvedDeps.getWeeklyActivity() }));
   app.get("/internal/worker-status", async () => ({ data: await resolvedDeps.getWorkerRuntimeStatus() }));
+  app.get("/internal/slo", async () => {
+    const status = await resolvedDeps.getWorkerRuntimeStatus();
+    return { data: buildSloStatus(status) };
+  });
   app.get("/internal/metrics", async (_request, reply) => {
     const status = await resolvedDeps.getWorkerRuntimeStatus();
-    const autoWorkload =
-      status.pipeline.lastAutoEventsJobs +
-      status.pipeline.lastAutoBackfillCodeItems +
-      status.pipeline.lastAutoBackfillCommitItems;
-    const autoInsertRatio = autoWorkload > 0
-      ? status.pipeline.lastAutoInserted / autoWorkload
-      : 0;
-    const autoErrorRatio = autoWorkload > 0
-      ? status.pipeline.lastAutoErrors / autoWorkload
-      : 0;
-    const manualErrorRatio = status.pipeline.lastManualJobsProcessed > 0
-      ? status.pipeline.lastManualJobsErrored / status.pipeline.lastManualJobsProcessed
-      : 0;
-    const updatedAtMs = status.rateLimit.updatedAt ? Date.parse(status.rateLimit.updatedAt) : NaN;
-    const statusAgeMs = Number.isNaN(updatedAtMs) ? -1 : Math.max(0, Date.now() - updatedAtMs);
+    const slo = buildSloStatus(status);
+    const statusFreshnessSloMet = slo.met.statusFreshness ? 1 : 0;
+    const autoErrorSloMet = slo.met.autoErrorRatio ? 1 : 0;
+    const sloOverallMet = slo.met.overall ? 1 : 0;
 
     const metrics = [
       "# HELP leak_worker_retention_enabled Worker retention enabled flag",
@@ -180,16 +216,25 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
       `leak_worker_pipeline_total_manual_jobs_errored ${status.pipeline.totalManualJobsErrored}`,
       "# HELP leak_worker_pipeline_last_auto_error_ratio Last auto-scan error ratio",
       "# TYPE leak_worker_pipeline_last_auto_error_ratio gauge",
-      `leak_worker_pipeline_last_auto_error_ratio ${autoErrorRatio}`,
+      `leak_worker_pipeline_last_auto_error_ratio ${slo.values.autoErrorRatio}`,
       "# HELP leak_worker_pipeline_last_auto_insert_ratio Last auto-scan insert ratio",
       "# TYPE leak_worker_pipeline_last_auto_insert_ratio gauge",
-      `leak_worker_pipeline_last_auto_insert_ratio ${autoInsertRatio}`,
+      `leak_worker_pipeline_last_auto_insert_ratio ${slo.values.autoInsertRatio}`,
       "# HELP leak_worker_pipeline_last_manual_error_ratio Last manual job error ratio",
       "# TYPE leak_worker_pipeline_last_manual_error_ratio gauge",
-      `leak_worker_pipeline_last_manual_error_ratio ${manualErrorRatio}`,
+      `leak_worker_pipeline_last_manual_error_ratio ${slo.values.manualErrorRatio}`,
       "# HELP leak_worker_status_age_ms Worker status payload age in ms",
       "# TYPE leak_worker_status_age_ms gauge",
-      `leak_worker_status_age_ms ${statusAgeMs}`,
+      `leak_worker_status_age_ms ${slo.values.statusAgeMs}`,
+      "# HELP leak_worker_slo_status_freshness_met Worker freshness SLO met (1/0)",
+      "# TYPE leak_worker_slo_status_freshness_met gauge",
+      `leak_worker_slo_status_freshness_met ${statusFreshnessSloMet}`,
+      "# HELP leak_worker_slo_auto_error_ratio_met Worker auto error ratio SLO met (1/0)",
+      "# TYPE leak_worker_slo_auto_error_ratio_met gauge",
+      `leak_worker_slo_auto_error_ratio_met ${autoErrorSloMet}`,
+      "# HELP leak_worker_slo_overall_met Worker overall SLO met (1/0)",
+      "# TYPE leak_worker_slo_overall_met gauge",
+      `leak_worker_slo_overall_met ${sloOverallMet}`,
       "# HELP leak_worker_detection_ruleset_info Detection ruleset version info",
       "# TYPE leak_worker_detection_ruleset_info gauge",
       `leak_worker_detection_ruleset_info{version="${DETECTION_RULESET_VERSION}"} 1`

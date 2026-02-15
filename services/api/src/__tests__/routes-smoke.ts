@@ -121,6 +121,13 @@ const run = async (): Promise<void> => {
   });
   assert.equal(runtimeStatus.statusCode, 200);
 
+  const sloStatus = await app.inject({
+    method: "GET",
+    url: "/internal/slo"
+  });
+  assert.equal(sloStatus.statusCode, 200);
+  assert.equal(sloStatus.body.includes("overall"), true);
+
   const metrics = await app.inject({
     method: "GET",
     url: "/internal/metrics"
@@ -133,6 +140,7 @@ const run = async (): Promise<void> => {
   assert.equal(metrics.body.includes("leak_worker_pipeline_last_auto_error_ratio"), true);
   assert.equal(metrics.body.includes("leak_worker_pipeline_last_auto_insert_ratio"), true);
   assert.equal(metrics.body.includes("leak_worker_status_age_ms"), true);
+  assert.equal(metrics.body.includes("leak_worker_slo_overall_met"), true);
   assert.equal(metrics.body.includes("leak_worker_detection_ruleset_info"), true);
 
   await app.close();

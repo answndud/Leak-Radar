@@ -10,6 +10,13 @@ route:
         - env="production"
         - severity="critical"
       receiver: leak-radar-prod-pagerduty
+      continue: true
+
+    - matchers:
+        - service="leak-radar"
+        - env="production"
+        - severity="critical"
+      receiver: leak-radar-prod-ticket-webhook
 
     - matchers:
         - service="leak-radar"
@@ -31,6 +38,15 @@ route:
         - service="leak-radar"
         - team="leak-platform"
       receiver: leak-platform-slack
+
+inhibit_rules:
+  - source_matchers:
+      - service="leak-radar"
+      - severity="critical"
+    target_matchers:
+      - service="leak-radar"
+      - severity="warning"
+    equal: ["alertname", "env", "team"]
 
 receivers:
   - name: default-null
@@ -71,3 +87,9 @@ receivers:
         details:
           summary: "{{ .CommonAnnotations.summary }}"
           description: "{{ .CommonAnnotations.description }}"
+
+  - name: leak-radar-prod-ticket-webhook
+    webhook_configs:
+      - url: "${TICKET_WEBHOOK_URL}"
+        send_resolved: true
+        max_alerts: 0

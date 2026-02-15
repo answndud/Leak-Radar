@@ -52,6 +52,7 @@ pnpm -w run dev:all
 - `GET /leaderboard`
 - `GET /activity`
 - `GET /internal/worker-status`
+- `GET /internal/slo`
 - `GET /internal/metrics` (Prometheus 텍스트)
 - `POST /scan-requests` (providers 또는 query)
   - providers는 서버에서 지원 목록 검증 후 처리
@@ -74,6 +75,8 @@ pnpm run test
   - pipeline cycle count/duration/inserted/error
   - pipeline 누적 카운터(auto/manual inserted, errors, jobs)
   - 파생 지표(auto/manual error ratio, auto insert ratio, status age)
+  - SLO 지표(freshness met, auto error met, overall met)
+- SLO JSON: `GET /internal/slo`
 - 템플릿 파일
   - Grafana: `infra/monitoring/grafana-dashboard.leak-radar-worker.json`
     - 변수: `env`, `team`, `job`
@@ -82,6 +85,11 @@ pnpm run test
     - `infra/monitoring/alert-rules.leak-radar-worker.staging.yml`
     - `infra/monitoring/alert-rules.leak-radar-worker.production.yml`
   - Alertmanager routes: `infra/monitoring/alertmanager.routes.leak-radar.yml`
+    - production critical: PagerDuty + Ticket webhook 동시 전송
+    - critical 발생 시 warning 억제(inhibit) 규칙 포함
+  - Ticket webhook payload
+    - schema: `infra/monitoring/ticket-webhook.payload.schema.json`
+    - example: `infra/monitoring/ticket-webhook.payload.example.json`
   - 운영 가이드: `OBSERVABILITY.md` (Runbook 포함)
 
 ## 참고 문서

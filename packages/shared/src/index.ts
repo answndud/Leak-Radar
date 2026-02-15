@@ -74,6 +74,24 @@ export type WorkerRuntimeStatus = {
   };
 };
 
+export type WorkerSloStatus = {
+  thresholds: {
+    statusAgeMsMax: number;
+    autoErrorRatioMax: number;
+  };
+  values: {
+    statusAgeMs: number;
+    autoErrorRatio: number;
+    autoInsertRatio: number;
+    manualErrorRatio: number;
+  };
+  met: {
+    statusFreshness: boolean;
+    autoErrorRatio: boolean;
+    overall: boolean;
+  };
+};
+
 export type LeakQuery = {
   provider?: string;
   sort?: "newest" | "oldest";

@@ -1,0 +1,18 @@
+{
+  "receiver": "leak-radar-prod-ticket-webhook",
+  "status": "firing",
+  "commonLabels": {
+    "alertname": "LeakWorkerSloOverallNotMetCriticalProd",
+    "service": "leak-radar",
+    "env": "production",
+    "severity": "critical",
+    "team": "leak-platform",
+    "owner": "security-ops"
+  },
+  "commonAnnotations": {
+    "summary": "[prod] worker SLO overall not met (critical)",
+    "description": "SLO non-compliance has continued for more than 30 minutes",
+    "runbook_url": "https://runbooks.leak-radar.dev/worker/slo",
+    "ticket_payload_template": "leak_worker_critical"
+  }
+}

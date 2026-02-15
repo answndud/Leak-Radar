@@ -5,6 +5,7 @@ Grafana/Alertmanager와 연동하는 최소 예시를 제공합니다.
 
 ## 엔드포인트
 - 상태 JSON: `GET /internal/worker-status`
+- SLO JSON: `GET /internal/slo`
 - Prometheus 메트릭: `GET /internal/metrics`
 
 ## 주요 메트릭
@@ -37,6 +38,9 @@ Grafana/Alertmanager와 연동하는 최소 예시를 제공합니다.
   - `leak_worker_pipeline_total_manual_jobs_processed`
   - `leak_worker_pipeline_total_manual_jobs_errored`
   - `leak_worker_detection_ruleset_info{version="..."}`
+  - `leak_worker_slo_status_freshness_met`
+  - `leak_worker_slo_auto_error_ratio_met`
+  - `leak_worker_slo_overall_met`
 
 ## Prometheus scrape 예시
 ```yaml
@@ -64,6 +68,10 @@ scrape_configs:
   - `leak_worker_ratelimit_remaining{api="events"}`
   - `leak_worker_ratelimit_remaining{api="commits"}`
   - `leak_worker_ratelimit_remaining{api="code"}`
+- SLO Compliance:
+  - `leak_worker_slo_status_freshness_met`
+  - `leak_worker_slo_auto_error_ratio_met`
+  - `leak_worker_slo_overall_met`
 
 ## Grafana 대시보드 템플릿 (축약 예시)
 ```json
@@ -110,6 +118,8 @@ Alertmanager 라우팅 예시:
 - `infra/monitoring/alertmanager.routes.leak-radar.yml`
 - `service/team/severity` 라벨을 기준으로 Slack/PagerDuty 수신자를 분기합니다.
 - 운영 권장: `env=production,severity=critical`은 PagerDuty로 우선 라우팅
+- production critical은 ticket webhook(`$TICKET_WEBHOOK_URL`)으로도 동시 전송됩니다.
+- 중복 알림 억제: `inhibit_rules`로 critical 발생 시 동일 alert warning 억제
 
 수신 채널 예시:
 - production warning: `#leak-radar-prod-alerts`
@@ -157,6 +167,30 @@ PagerDuty 템플릿 변수 예시:
 - `details.summary: "{{ .CommonAnnotations.summary }}"`
 - `details.description: "{{ .CommonAnnotations.description }}"`
 
+Webhook(티켓) 페이로드 예시:
+```json
+{
+  "receiver": "leak-radar-prod-ticket-webhook",
+  "status": "firing",
+  "commonLabels": {
+    "alertname": "LeakWorkerSloOverallNotMetCriticalProd",
+    "service": "leak-radar",
+    "env": "production",
+    "severity": "critical"
+  },
+  "commonAnnotations": {
+    "summary": "[prod] worker SLO overall not met (critical)",
+    "description": "SLO non-compliance has continued for more than 30 minutes",
+    "runbook_url": "https://runbooks.leak-radar.dev/worker/slo",
+    "ticket_payload_template": "leak_worker_critical"
+  }
+}
+```
+
+Webhook 스키마/샘플 파일:
+- 스키마: `infra/monitoring/ticket-webhook.payload.schema.json`
+- 예시: `infra/monitoring/ticket-webhook.payload.example.json`
+
 ## 운영 팁
 - `reset_after_ms`는 급격히 증가할 수 있으므로 절대값보다 추세를 보세요.
 - `cycle_duration_ms`와 `last_auto_errors`를 같이 보면 병목 지점을 빠르게 찾을 수 있습니다.
@@ -178,10 +212,17 @@ PagerDuty 템플릿 변수 예시:
 | commit rate-limit exhausted | `reset_after_ms` 값, remaining 추이 확인 | poll interval 상향, 백필 모드 조정 |
 | auto insert ratio low | events/backfill 수집량 대비 insert 확인 | 쿼리 로테이션 갱신, 패턴 룰 점검 |
 
+### 자동 액션
+- `severity=critical` + `env=production`:
+  1) PagerDuty 알림 발송
+  2) Ticket webhook 호출 (incident/ticket 자동 생성)
+- 알림 annotation의 `runbook_url`을 티켓 설명 본문에 포함해 즉시 대응 경로 제공
+
 ## SLO/SLA 기준선 (초안)
 - 상태 신선도 SLO: `leak_worker_status_age_ms < 300000`를 99% 이상 유지 (1일 윈도우)
 - 자동 스캔 오류율 SLO: `leak_worker_pipeline_last_auto_error_ratio < 0.3`를 95% 이상 유지 (1일 윈도우)
 - 자동 삽입율 관찰 지표: `leak_worker_pipeline_last_auto_insert_ratio`의 7일 추세 하락 감지
+- SLO 게이트 메트릭: `leak_worker_slo_overall_met` (1=준수, 0=위반)
 - 알림 SLA:
   - production critical: 5분 이내 on-call 확인
   - production warning: 30분 이내 triage

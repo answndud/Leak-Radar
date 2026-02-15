@@ -5,6 +5,7 @@ import type {
   LeakRecord,
   ProviderStat,
   StatsSummary,
+  WorkerSloStatus,
   WorkerRuntimeStatus
 } from "@leak/shared";
 
@@ -288,6 +289,28 @@ export const App = () => {
         totalManualInserted: 0,
         totalManualJobsProcessed: 0,
         totalManualJobsErrored: 0
+      }
+    },
+    15000
+  );
+
+  const workerSlo = useAutoRefresh<WorkerSloStatus>(
+    "/internal/slo",
+    {
+      thresholds: {
+        statusAgeMsMax: 300000,
+        autoErrorRatioMax: 0.3
+      },
+      values: {
+        statusAgeMs: -1,
+        autoErrorRatio: 0,
+        autoInsertRatio: 0,
+        manualErrorRatio: 0
+      },
+      met: {
+        statusFreshness: false,
+        autoErrorRatio: false,
+        overall: false
       }
     },
     15000
@@ -729,6 +752,12 @@ export const App = () => {
             {workerStatus.pipeline.lastManualJobsErrored}
           </span>
         </div>
+        <div className="metric-card small">
+          <span className="metric-label">SLO 전체</span>
+          <span className="metric-value" style={{ fontSize: "16px" }}>
+            {workerSlo.met.overall ? "준수" : "위반"}
+          </span>
+        </div>
         {!compactWorkerStatus && (
           <>
             <div className="metric-card small">
@@ -747,6 +776,12 @@ export const App = () => {
               <span className="metric-label">누적 수동 처리</span>
               <span className="metric-value" style={{ fontSize: "16px" }}>
                 {workerStatus.pipeline.totalManualJobsProcessed}
+              </span>
+            </div>
+            <div className="metric-card small">
+              <span className="metric-label">SLO 자동 오류율</span>
+              <span className="metric-value" style={{ fontSize: "16px" }}>
+                {Math.round(workerSlo.values.autoErrorRatio * 100)}%
               </span>
             </div>
           </>

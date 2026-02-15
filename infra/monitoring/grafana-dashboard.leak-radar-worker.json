@@ -217,7 +217,98 @@
         { "expr": "leak_worker_ratelimit_reset_after_ms{service=\"leak-radar\",env=~\"$env\",team=~\"$team\",api=\"commits\"}" },
         { "expr": "leak_worker_ratelimit_reset_after_ms{service=\"leak-radar\",env=~\"$env\",team=~\"$team\",api=\"code\"}" }
       ]
+    },
+    {
+      "type": "timeseries",
+      "title": "SLO Compliance (1=met)",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "leak_worker_slo_status_freshness_met{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}" },
+        { "expr": "leak_worker_slo_auto_error_ratio_met{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}" },
+        { "expr": "leak_worker_slo_overall_met{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "SLO Overall Now",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 40 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "VIOLATED", "color": "red" },
+                "1": { "text": "MET", "color": "green" }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "leak_worker_slo_overall_met{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}" }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Status Age vs SLO",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 40 },
+      "targets": [
+        { "expr": "leak_worker_status_age_ms{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}" }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Auto Error Ratio vs SLO",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 40 },
+      "targets": [
+        { "expr": "leak_worker_pipeline_last_auto_error_ratio{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}" }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      }
     }
   ]
 }
-          "expr": "leak_worker_pipeline_cycle_duration_ms{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}"
