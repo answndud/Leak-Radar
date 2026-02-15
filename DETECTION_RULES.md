@@ -10,6 +10,8 @@
 ## Fixture 기준
 - fixture 소스: `services/worker/src/__tests__/detection-fixtures.ts`
 - 실행 테스트: `services/worker/src/__tests__/detection-fixtures-smoke.ts`
+- 리포트 생성: `pnpm -w --filter @leak/worker run report:fixtures`
+- 리포트 파일: `DETECTION_FIXTURES_REPORT.md`
 
 현재 fixture 범주:
 - 정탐: openai, anthropic, google, slack, github
@@ -21,6 +23,7 @@
 3. 필요 시 룰셋 버전 증가 (`DETECTION_RULESET_VERSION`)
 4. `pnpm -w run test`로 회귀 확인
 5. `PROGRESS.md`와 본 문서에 변경 내역 기록
+6. `report:fixtures` 실행 후 리포트 갱신 확인
 
 ## 버전 규칙
 - 형식: `YYYY.MM.DD.N`

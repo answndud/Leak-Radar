@@ -91,6 +91,7 @@ pnpm run test
 - 보관/정리 정책: `RETENTION.md`
 - 관측/알림 가이드: `OBSERVABILITY.md`
 - 탐지 룰셋/fixture: `DETECTION_RULES.md`
+- 탐지 fixture 리포트: `DETECTION_FIXTURES_REPORT.md`
 
 ## 주의
 - 원문 비밀키는 저장하지 않습니다.
