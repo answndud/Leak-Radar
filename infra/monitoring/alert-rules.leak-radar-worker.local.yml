@@ -1,0 +1,28 @@
+groups:
+  - name: leak-radar-worker-local
+    rules:
+      - alert: LeakWorkerStatusStaleLocal
+        expr: leak_worker_status_age_ms > 600000
+        for: 10m
+        labels:
+          severity: warning
+          profile: local
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "[local] worker status stale"
+          description: "status age is above 10 minutes in local profile"
+
+      - alert: LeakWorkerAutoErrorRatioHighLocal
+        expr: leak_worker_pipeline_last_auto_error_ratio > 0.5
+        for: 15m
+        labels:
+          severity: warning
+          profile: local
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "[local] auto error ratio high"
+          description: "auto error ratio is above 50% in local profile"

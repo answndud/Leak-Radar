@@ -39,6 +39,8 @@ type GithubResponse<T> = {
   ok: boolean;
   data: T | null;
   resetAfterMs: number | null;
+  remaining: number | null;
+  limit: number | null;
 };
 
 const log = (tag: string, message: string): void => {
@@ -59,34 +61,36 @@ const sleep = (ms: number): Promise<void> =>
  * remaining이 0이거나 403 응답이면 reset 시각까지의 ms 반환
  * remaining이 낮지만 0은 아닌 경우 null 반환 (호출자가 선제 sleep 결정)
  */
-const parseRateLimit = (response: Response): { resetAfterMs: number | null; remaining: number | null } => {
+const parseRateLimit = (response: Response): { resetAfterMs: number | null; remaining: number | null; limit: number | null } => {
   const remaining = response.headers.get("x-ratelimit-remaining");
   const reset = response.headers.get("x-ratelimit-reset");
   const limit = response.headers.get("x-ratelimit-limit");
 
   const remainingNum = remaining ? Number.parseInt(remaining, 10) : null;
+  const limitNum = limit ? Number.parseInt(limit, 10) : null;
 
   if (limit && remaining) {
     log("RATELIMIT", `API ${response.url.split("?")[0]?.split("github.com")[1] ?? response.url} → remaining=${remaining}/${limit}`);
   }
 
   if (!reset) {
-    return { resetAfterMs: null, remaining: remainingNum };
+    return { resetAfterMs: null, remaining: remainingNum, limit: limitNum };
   }
 
   if (remainingNum === 0 || response.status === 403 || response.status === 429) {
     const resetSeconds = Number.parseInt(reset, 10);
     if (Number.isNaN(resetSeconds)) {
-      return { resetAfterMs: null, remaining: remainingNum };
+        return { resetAfterMs: null, remaining: remainingNum, limit: limitNum };
     }
     const delay = resetSeconds * 1000 - Date.now();
     return {
       resetAfterMs: delay > 0 ? delay + 1000 : 1000, // 최소 1초 여유
-      remaining: remainingNum
+      remaining: remainingNum,
+      limit: limitNum
     };
   }
 
-  return { resetAfterMs: null, remaining: remainingNum };
+  return { resetAfterMs: null, remaining: remainingNum, limit: limitNum };
 };
 
 /**
@@ -114,7 +118,7 @@ const requestGithub = async <T>(
     }
   });
 
-  const { resetAfterMs, remaining } = parseRateLimit(response);
+  const { resetAfterMs, remaining, limit } = parseRateLimit(response);
 
   // 레이트리밋에 걸린 경우
   if (response.status === 403 || response.status === 429) {
@@ -123,19 +127,19 @@ const requestGithub = async <T>(
       await sleep(resetAfterMs);
       return requestGithub<T>(url, githubToken, accept, retries - 1);
     }
-    return { ok: false, data: null, resetAfterMs };
+    return { ok: false, data: null, resetAfterMs, remaining, limit };
   }
 
   if (!response.ok) {
     logWarn("GITHUB", `HTTP ${response.status} for ${url.split("?")[0]}`);
-    return { ok: false, data: null, resetAfterMs };
+    return { ok: false, data: null, resetAfterMs, remaining, limit };
   }
 
   // 선제적 대기 (remaining이 매우 낮을 때)
   await preemptiveSleep(remaining);
 
   const data = (await response.json()) as T;
-  return { ok: true, data, resetAfterMs };
+  return { ok: true, data, resetAfterMs, remaining, limit };
 };
 
 /* ────────────────────────────────────────────────────────
@@ -146,13 +150,15 @@ export const fetchRecentPushEvents = async (
   githubToken?: string
 ): Promise<GithubResponse<PushEvent[]>> => {
   if (!githubToken) {
-    return { ok: false, data: null, resetAfterMs: null };
+    return { ok: false, data: null, resetAfterMs: null, remaining: null, limit: null };
   }
 
   // Events API는 페이지당 30개, 최대 10 페이지.
   // 한 번에 2페이지씩 가져와서 커밋을 더 많이 수집
   const allPushes: PushEvent[] = [];
   let lastResetMs: number | null = null;
+  let lastRemaining: number | null = null;
+  let lastLimit: number | null = null;
 
   for (const pageNum of [1, 2]) {
     const response = await requestGithub<
@@ -169,6 +175,8 @@ export const fetchRecentPushEvents = async (
 
     if (!response.ok || !response.data) {
       lastResetMs = response.resetAfterMs;
+      lastRemaining = response.remaining;
+      lastLimit = response.limit;
       break;
     }
 
@@ -182,6 +190,8 @@ export const fetchRecentPushEvents = async (
     }
 
     lastResetMs = response.resetAfterMs;
+    lastRemaining = response.remaining;
+    lastLimit = response.limit;
 
     // 2페이지 사이 잠깐 대기
     if (pageNum < 2) {
@@ -190,7 +200,13 @@ export const fetchRecentPushEvents = async (
   }
 
   // PushEvent가 없어도 API 호출 자체는 성공 – ok: true 반환
-  return { ok: true, data: allPushes, resetAfterMs: lastResetMs };
+  return {
+    ok: true,
+    data: allPushes,
+    resetAfterMs: lastResetMs,
+    remaining: lastRemaining,
+    limit: lastLimit
+  };
 };
 
 /* ────────────────────────────────────────────────────────
@@ -241,7 +257,7 @@ export const fetchCommitBackfill = async (
   githubToken?: string
 ): Promise<GithubResponse<PushEvent[]>> => {
   if (!githubToken) {
-    return { ok: false, data: null, resetAfterMs: null };
+    return { ok: false, data: null, resetAfterMs: null, remaining: null, limit: null };
   }
 
   const url = `https://api.github.com/search/commits?q=${encodeURIComponent(
@@ -257,7 +273,13 @@ export const fetchCommitBackfill = async (
   }>(url, githubToken, "application/vnd.github.cloak-preview+json");
 
   if (!response.ok || !response.data) {
-    return { ok: false, data: null, resetAfterMs: response.resetAfterMs };
+    return {
+      ok: false,
+      data: null,
+      resetAfterMs: response.resetAfterMs,
+      remaining: response.remaining,
+      limit: response.limit
+    };
   }
 
   log("SEARCH", `Commit Search total_count=${response.data.total_count ?? "N/A"}, items=${response.data.items.length}`);
@@ -269,7 +291,13 @@ export const fetchCommitBackfill = async (
       commitSha: item.sha
     }));
 
-  return { ok: true, data: jobs, resetAfterMs: response.resetAfterMs };
+  return {
+    ok: true,
+    data: jobs,
+    resetAfterMs: response.resetAfterMs,
+    remaining: response.remaining,
+    limit: response.limit
+  };
 };
 
 /* ────────────────────────────────────────────────────────
@@ -281,7 +309,7 @@ export const fetchCodeSearchBackfill = async (
   githubToken?: string
 ): Promise<GithubResponse<CodeSearchResult[]>> => {
   if (!githubToken) {
-    return { ok: false, data: null, resetAfterMs: null };
+    return { ok: false, data: null, resetAfterMs: null, remaining: null, limit: null };
   }
 
   const url = `https://api.github.com/search/code?q=${encodeURIComponent(
@@ -298,7 +326,13 @@ export const fetchCodeSearchBackfill = async (
   }>(url, githubToken, "application/vnd.github+json");
 
   if (!response.ok || !response.data) {
-    return { ok: false, data: null, resetAfterMs: response.resetAfterMs };
+    return {
+      ok: false,
+      data: null,
+      resetAfterMs: response.resetAfterMs,
+      remaining: response.remaining,
+      limit: response.limit
+    };
   }
 
   log("SEARCH", `Code Search total_count=${response.data.total_count ?? "N/A"}, items=${response.data.items.length}`);
@@ -312,7 +346,13 @@ export const fetchCodeSearchBackfill = async (
       htmlUrl: item.html_url
     }));
 
-  return { ok: true, data: results, resetAfterMs: response.resetAfterMs };
+  return {
+    ok: true,
+    data: results,
+    resetAfterMs: response.resetAfterMs,
+    remaining: response.remaining,
+    limit: response.limit
+  };
 };
 
 /* ────────────────────────────────────────────────────────

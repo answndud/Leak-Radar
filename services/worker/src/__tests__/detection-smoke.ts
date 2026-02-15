@@ -16,16 +16,19 @@ const assertProvidersFiltered = (line: string, allowed: string[], expected: stri
 
 const openaiKey = ["sk", "-proj-", "abcdefghijklmnopqrstuv", "1234567890"].join("");
 const anthropicKey = ["sk", "-ant-", "abcdefghij", "ABCDEFGHIJ", "123456"].join("");
-const googleKey = ["AI", "zaSy", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"].join("");
+const googleKey = ["AI", "zaSy", "a1B2c3D4e5F6g7H8i9J0kLmNoPqRsTuVw"].join("");
+const mistralKey = "MISTRAL_API_KEY=1234567890abcdef1234567890abcdef";
 
 // 기본 탐지 케이스
 assertProviders(`OPENAI_API_KEY=${openaiKey}`, ["openai"]);
 assertProviders(`ANTHROPIC_API_KEY=${anthropicKey}`, ["anthropic"]);
 assertProviders(`GOOGLE_API_KEY=${googleKey}`, ["google"]);
+assertProviders(mistralKey, ["mistral"]);
 
 // 오탐 방지: placeholder/변수명
 assertProviders("OPENAI_API_KEY=sk-your-key", []);
 assertProviders("export const OPENAI_API_KEY = \"\"", []);
+assertProviders("MISTRAL_API_KEY=replace-with-your-key", []);
 
 // provider 필터링
 assertProvidersFiltered(

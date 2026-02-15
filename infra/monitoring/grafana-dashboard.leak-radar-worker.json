@@ -1,0 +1,223 @@
+{
+  "title": "Leak Radar Worker",
+  "uid": "leak-radar-worker",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "links": [
+    {
+      "title": "Worker Status API",
+      "url": "/api/internal/worker-status",
+      "targetBlank": true,
+      "type": "link"
+    },
+    {
+      "title": "Metrics Endpoint",
+      "url": "/api/internal/metrics",
+      "targetBlank": true,
+      "type": "link"
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "enable": true,
+        "expr": "ALERTS{service=\"leak-radar\",env=~\"$env\",team=~\"$team\",alertstate=\"firing\"}",
+        "hide": false,
+        "iconColor": "rgba(255, 96, 96, 1)",
+        "name": "Firing Alerts",
+        "titleFormat": "{{alertname}}",
+        "textFormat": "severity={{severity}} profile={{profile}}"
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "env",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "query": "label_values(up{service=\"leak-radar\"}, env)",
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": ".*"
+        }
+      },
+      {
+        "name": "team",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "query": "label_values(up{service=\"leak-radar\"}, team)",
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": ".*"
+        }
+      },
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "query": "label_values(up{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}, job)",
+        "current": {
+          "text": "leak-radar-api",
+          "value": "leak-radar-api"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Cycle Duration (ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "leak_worker_pipeline_cycle_duration_ms{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Status Age (ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 120000 },
+              { "color": "red", "value": 300000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "leak_worker_status_age_ms{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Rate Limit Remaining",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "leak_worker_ratelimit_remaining{service=\"leak-radar\",env=~\"$env\",team=~\"$team\",api=\"events\"}" },
+        { "expr": "leak_worker_ratelimit_remaining{service=\"leak-radar\",env=~\"$env\",team=~\"$team\",api=\"commits\"}" },
+        { "expr": "leak_worker_ratelimit_remaining{service=\"leak-radar\",env=~\"$env\",team=~\"$team\",api=\"code\"}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Auto Error Ratio",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.15 },
+              { "color": "red", "value": 0.3 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "leak_worker_pipeline_last_auto_error_ratio{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Auto Insert Ratio",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.05 },
+              { "color": "green", "value": 0.2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "leak_worker_pipeline_last_auto_insert_ratio{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Auto Totals",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        { "expr": "leak_worker_pipeline_total_auto_inserted{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}" },
+        { "expr": "leak_worker_pipeline_total_auto_errors{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Manual Totals",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        { "expr": "leak_worker_pipeline_total_manual_inserted{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}" },
+        { "expr": "leak_worker_pipeline_total_manual_jobs_processed{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}" },
+        { "expr": "leak_worker_pipeline_total_manual_jobs_errored{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Rate Limit Reset After (ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        { "expr": "leak_worker_ratelimit_reset_after_ms{service=\"leak-radar\",env=~\"$env\",team=~\"$team\",api=\"events\"}" },
+        { "expr": "leak_worker_ratelimit_reset_after_ms{service=\"leak-radar\",env=~\"$env\",team=~\"$team\",api=\"commits\"}" },
+        { "expr": "leak_worker_ratelimit_reset_after_ms{service=\"leak-radar\",env=~\"$env\",team=~\"$team\",api=\"code\"}" }
+      ]
+    }
+  ]
+}
+          "expr": "leak_worker_pipeline_cycle_duration_ms{service=\"leak-radar\",env=~\"$env\",team=~\"$team\"}"

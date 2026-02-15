@@ -1,3 +1,5 @@
+import { AI_PROVIDER_IDS } from "@leak/shared";
+
 type WorkerConfig = {
   pollIntervalMs: number;
   githubToken?: string;
@@ -8,6 +10,8 @@ type WorkerConfig = {
   backfillMode: "commits" | "code" | "both";
   backfillAlways: boolean;
   maxFileBytes: number;
+  retentionDays: number;
+  retentionRunIntervalMs: number;
 };
 
 const parseInterval = (value: string | undefined, fallback: number): number => {
@@ -17,6 +21,19 @@ const parseInterval = (value: string | undefined, fallback: number): number => {
 
   const parsed = Number.parseInt(value, 10);
   if (Number.isNaN(parsed) || parsed < 1000) {
+    return fallback;
+  }
+
+  return parsed;
+};
+
+const parseNonNegativeInt = (value: string | undefined, fallback: number): number => {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed < 0) {
     return fallback;
   }
 
@@ -38,7 +55,9 @@ export const loadConfig = (): WorkerConfig => ({
         ? "both"
         : "commits",
   backfillAlways: process.env.WORKER_BACKFILL_ALWAYS === "true",
-  maxFileBytes: Number.parseInt(process.env.WORKER_MAX_FILE_BYTES ?? "200000", 10)
+  maxFileBytes: Number.parseInt(process.env.WORKER_MAX_FILE_BYTES ?? "200000", 10),
+  retentionDays: parseNonNegativeInt(process.env.WORKER_RETENTION_DAYS, 0),
+  retentionRunIntervalMs: parseInterval(process.env.WORKER_RETENTION_INTERVAL_MS, 3600000)
 });
 
 /**
@@ -54,6 +73,7 @@ export const PROVIDER_QUERIES: Record<string, string[]> = {
   kimi: ["moonshot in:file sk-", "MOONSHOT_API_KEY in:file"],
   glm: ["zhipuai in:file api_key", "GLM_API_KEY in:file"],
   deepseek: ["DEEPSEEK_API_KEY in:file", "deepseek sk- in:file"],
+  mistral: ["MISTRAL_API_KEY in:file", "mistral api key in:file"],
 
   // ── 기타 서비스 (수동 스캔에서 선택 가능) ──
   stripe: ["sk_live_ in:file"],
@@ -70,8 +90,8 @@ export const PROVIDER_QUERIES: Record<string, string[]> = {
 
 /** 디폴트 AI provider 목록 (자동 스캔에 사용) */
 export const DEFAULT_PROVIDERS = [
-  "openai", "anthropic", "google", "grok", "kimi", "glm", "deepseek"
-] as const;
+  ...AI_PROVIDER_IDS
+];
 
 /**
  * 자동 스캔용 로테이션 쿼리 – AI 모델 provider만 순환

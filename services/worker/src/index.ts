@@ -6,7 +6,7 @@ dotenvConfig({ path: resolve(__dirname, "../../../.env") });
 // CWD 기준 .env도 시도 (로컬 오버라이드용)
 dotenvConfig();
 
-import { loadConfig, ROTATING_QUERIES, buildQueriesForProviders } from "./config";
+import { loadConfig, ROTATING_QUERIES } from "./config";
 import { fetchBackfillJobs, pollGitHub } from "./github";
 import {
   fetchCodeSearchBackfill,
@@ -15,6 +15,8 @@ import {
 } from "./github-client";
 import { getPool } from "./db";
 import { makeKeyFingerprint, redactSecret, scanLine, AI_PROVIDERS } from "./detection";
+import { parseScanQueryInput } from "./scan-query";
+import { upsertRuntimeStatus } from "./runtime-status";
 
 /* ────────────────────────────────────────────────────────
  * 유틸
@@ -398,6 +400,89 @@ const markJob = async (params: {
   );
 };
 
+const runRetentionCleanup = async (retentionDays: number): Promise<void> => {
+  if (retentionDays <= 0) {
+    return;
+  }
+
+  const pool = getPool();
+  const deletedResult = await pool.query(
+    `DELETE FROM leaks
+     WHERE detected_at < now() - ($1 || ' days')::interval`,
+    [retentionDays]
+  );
+  const deleted = deletedResult.rowCount ?? 0;
+
+  await pool.query("TRUNCATE activity_daily");
+  await pool.query(
+    `INSERT INTO activity_daily (date, leaks_count)
+     SELECT detected_at::date AS date, COUNT(*)::int AS leaks_count
+     FROM leaks
+     GROUP BY detected_at::date`
+  );
+
+  await pool.query("TRUNCATE leaderboard_devs");
+  await pool.query(
+    `INSERT INTO leaderboard_devs (actor_login, leak_count, last_seen_at)
+     SELECT actor_login, COUNT(*)::int AS leak_count, MAX(detected_at) AS last_seen_at
+     FROM leaks
+     WHERE actor_login IS NOT NULL
+     GROUP BY actor_login`
+  );
+
+  log("RETENTION", `보관 정책 정리 실행 완료 (retention=${retentionDays}일, 삭제=${deleted}건)`);
+  await upsertRuntimeStatus("retention", {
+    enabled: true,
+    retentionDays,
+    lastRunAt: new Date().toISOString(),
+    lastDeleted: deleted
+  }).catch((error) => logWarn("RETENTION", `상태 저장 실패: ${error}`));
+};
+
+const upsertRateLimitStatus = async (status: {
+  eventsResetAfterMs?: number | null;
+  eventsRemaining?: number | null;
+  eventsLimit?: number | null;
+  commitResetAfterMs?: number | null;
+  commitRemaining?: number | null;
+  commitLimit?: number | null;
+  codeResetAfterMs?: number | null;
+  codeRemaining?: number | null;
+  codeLimit?: number | null;
+}): Promise<void> => {
+  rateLimitState = {
+    ...rateLimitState,
+    ...status
+  };
+
+  await upsertRuntimeStatus("rate_limit", {
+    ...rateLimitState,
+    updatedAt: new Date().toISOString()
+  }).catch((error) => logWarn("RATELIMIT", `상태 저장 실패: ${error}`));
+};
+
+let rateLimitState: {
+  eventsResetAfterMs: number | null;
+  eventsRemaining: number | null;
+  eventsLimit: number | null;
+  commitResetAfterMs: number | null;
+  commitRemaining: number | null;
+  commitLimit: number | null;
+  codeResetAfterMs: number | null;
+  codeRemaining: number | null;
+  codeLimit: number | null;
+} = {
+  eventsResetAfterMs: null,
+  eventsRemaining: null,
+  eventsLimit: null,
+  commitResetAfterMs: null,
+  commitRemaining: null,
+  commitLimit: null,
+  codeResetAfterMs: null,
+  codeRemaining: null,
+  codeLimit: null
+};
+
 /* ────────────────────────────────────────────────────────
  * 자동 스캔 – scan_jobs 없이도 항상 실행되는 핵심 루프
  * 매 사이클마다 로테이션 쿼리를 순환하여 다양한 provider 유출 탐지
@@ -411,10 +496,21 @@ const getNextQuery = (): string => {
   return query;
 };
 
-const runAutoScan = async (): Promise<number> => {
+type AutoScanStats = {
+  inserted: number;
+  eventsJobs: number;
+  backfillCodeItems: number;
+  backfillCommitItems: number;
+  errors: number;
+};
+
+const runAutoScan = async (): Promise<AutoScanStats> => {
   const config = loadConfig();
   const seen = new Set<string>();
   let totalFound = 0;
+  let errors = 0;
+  let backfillCodeItems = 0;
+  let backfillCommitItems = 0;
 
   // 자동 스캔은 AI 모델 provider만 탐지
   log("AUTO", `AI 모델만 스캔: [${[...AI_PROVIDERS].join(", ")}]`);
@@ -422,11 +518,22 @@ const runAutoScan = async (): Promise<number> => {
   // 1단계: Events API 폴링
   log("EVENTS", "GitHub Events API 폴링 시작");
   const result = await pollGitHub();
+  await upsertRateLimitStatus({
+    eventsResetAfterMs: result.resetAfterMs,
+    eventsRemaining: result.remaining,
+    eventsLimit: result.limit
+  });
 
   if (result.resetAfterMs && result.resetAfterMs > 0) {
     logWarn("RATELIMIT", `Events API 레이트리밋 - ${Math.ceil(result.resetAfterMs / 1000)}초 대기`);
     await sleep(result.resetAfterMs);
-    return 0;
+    return {
+      inserted: 0,
+      eventsJobs: result.jobs.length,
+      backfillCodeItems,
+      backfillCommitItems,
+      errors
+    };
   }
 
   const eventsCount = result.jobs.length;
@@ -442,6 +549,7 @@ const runAutoScan = async (): Promise<number> => {
       const found = await processJob(job.repoFullName, job.commitSha, AI_PROVIDERS);
       totalFound += found;
     } catch (err) {
+      errors += 1;
       logWarn("SCAN", `커밋 처리 오류 ${job.repoFullName}@${job.commitSha.slice(0, 7)}: ${err}`);
     }
   }
@@ -463,11 +571,17 @@ const runAutoScan = async (): Promise<number> => {
     if (config.backfillMode === "code" || config.backfillMode === "both") {
       log("BACKFILL", "Code Search API 호출");
       const codeBackfill = await fetchCodeSearchBackfill(backfillQuery, config.githubToken);
+      await upsertRateLimitStatus({
+        codeResetAfterMs: codeBackfill.resetAfterMs,
+        codeRemaining: codeBackfill.remaining,
+        codeLimit: codeBackfill.limit
+      });
       if (codeBackfill.resetAfterMs && codeBackfill.resetAfterMs > 0) {
         logWarn("RATELIMIT", `Code Search 레이트리밋 - ${Math.ceil(codeBackfill.resetAfterMs / 1000)}초 대기`);
         await sleep(codeBackfill.resetAfterMs);
       } else {
         const codeItems = codeBackfill.data ?? [];
+        backfillCodeItems = codeItems.length;
         log("BACKFILL", `Code Search에서 ${codeItems.length}개 파일 수집`);
         let codeFound = 0;
         for (const item of codeItems) {
@@ -486,6 +600,7 @@ const runAutoScan = async (): Promise<number> => {
             });
             codeFound += found;
           } catch (err) {
+            errors += 1;
             logWarn("SCAN", `Code Search 파일 처리 오류: ${err}`);
           }
         }
@@ -500,10 +615,16 @@ const runAutoScan = async (): Promise<number> => {
     if (config.backfillMode === "commits" || config.backfillMode === "both") {
       log("BACKFILL", "Commit Search API 호출");
       const backfill = await fetchBackfillJobs(backfillQuery);
+      await upsertRateLimitStatus({
+        commitResetAfterMs: backfill.resetAfterMs,
+        commitRemaining: backfill.remaining,
+        commitLimit: backfill.limit
+      });
       if (backfill.resetAfterMs && backfill.resetAfterMs > 0) {
         logWarn("RATELIMIT", `Commit Search 레이트리밋 - ${Math.ceil(backfill.resetAfterMs / 1000)}초 대기`);
         await sleep(backfill.resetAfterMs);
       } else {
+        backfillCommitItems = backfill.jobs.length;
         log("BACKFILL", `Commit Search에서 ${backfill.jobs.length}개 커밋 수집`);
         let backfillFound = 0;
         for (const job of backfill.jobs) {
@@ -516,6 +637,7 @@ const runAutoScan = async (): Promise<number> => {
             const found = await processJob(job.repoFullName, job.commitSha, AI_PROVIDERS);
             backfillFound += found;
           } catch (err) {
+            errors += 1;
             logWarn("SCAN", `백필 커밋 처리 오류: ${err}`);
           }
         }
@@ -527,34 +649,18 @@ const runAutoScan = async (): Promise<number> => {
     }
   }
 
-  return totalFound;
+  return {
+    inserted: totalFound,
+    eventsJobs: result.jobs.length,
+    backfillCodeItems,
+    backfillCommitItems,
+    errors
+  };
 };
 
 /* ────────────────────────────────────────────────────────
  * scan_jobs 대기열에서 job 하나 처리 (수동/예약 스캔 호환)
  * ──────────────────────────────────────────────────────── */
-
-/**
- * query 문자열을 파싱하여 GitHub Search 쿼리 목록 + 허용 provider 반환.
- * - `{"providers":["openai","anthropic"]}` 형태 → provider별 쿼리 + provider Set
- * - 일반 문자열 → 그대로 단건 쿼리, provider 필터 없음 (전체 허용)
- */
-const parseJobQueries = (query: string | null): { queries: string[]; allowedProviders?: Set<string> } => {
-  if (!query) {
-    return { queries: [] };
-  }
-  try {
-    const parsed = JSON.parse(query) as { providers?: string[] };
-    if (parsed.providers && Array.isArray(parsed.providers) && parsed.providers.length > 0) {
-      const queries = buildQueriesForProviders(parsed.providers);
-      log("JOBS", `providers [${parsed.providers.join(", ")}] → 쿼리 ${queries.length}개 생성`);
-      return { queries, allowedProviders: new Set(parsed.providers) };
-    }
-  } catch {
-    // JSON이 아닌 일반 문자열
-  }
-  return { queries: [query] };
-};
 
 const runJobScan = async (query: string | null): Promise<number> => {
   const config = loadConfig();
@@ -562,7 +668,10 @@ const runJobScan = async (query: string | null): Promise<number> => {
   let found = 0;
 
   // 수동 스캔에서 선택된 provider 파싱
-  const { queries, allowedProviders } = parseJobQueries(query);
+  const { queries, allowedProviders, selectedProviders } = parseScanQueryInput(query);
+  if (selectedProviders && selectedProviders.length > 0) {
+    log("JOBS", `providers [${selectedProviders.join(", ")}] → 쿼리 ${queries.length}개 생성`);
+  }
   log("JOBS", `수동 스캔 provider 필터: ${allowedProviders ? `[${[...allowedProviders].join(", ")}]` : "전체"}`);
 
   // Events API 폴링
@@ -652,6 +761,35 @@ const run = async (): Promise<void> => {
   log("WORKER", `  백필 항상 실행: ${config.backfillAlways}`);
   log("WORKER", `  백필 빈 결과 시 실행: ${config.backfillOnEmpty}`);
   log("WORKER", `  최대 파일 크기: ${config.maxFileBytes}바이트`);
+  log("WORKER", `  보관 기간: ${config.retentionDays > 0 ? `${config.retentionDays}일` : "무기한"}`);
+  log("WORKER", `  보관 정리 주기: ${Math.round(config.retentionRunIntervalMs / 1000)}초`);
+
+  await upsertRuntimeStatus("retention", {
+    enabled: config.retentionDays > 0,
+    retentionDays: config.retentionDays,
+    lastRunAt: null,
+    lastDeleted: 0
+  }).catch((error) => logWarn("RETENTION", `초기 상태 저장 실패: ${error}`));
+
+  await upsertRuntimeStatus("pipeline", {
+    cycleCount: 0,
+    lastCycleStartedAt: null,
+    lastCycleFinishedAt: null,
+    lastCycleDurationMs: 0,
+    lastAutoInserted: 0,
+    lastAutoEventsJobs: 0,
+    lastAutoBackfillCodeItems: 0,
+    lastAutoBackfillCommitItems: 0,
+    lastAutoErrors: 0,
+    lastManualInserted: 0,
+    lastManualJobsProcessed: 0,
+    lastManualJobsErrored: 0,
+    totalAutoInserted: 0,
+    totalAutoErrors: 0,
+    totalManualInserted: 0,
+    totalManualJobsProcessed: 0,
+    totalManualJobsErrored: 0
+  }).catch((error) => logWarn("CYCLE", `초기 파이프라인 상태 저장 실패: ${error}`));
 
   if (!config.githubToken) {
     logError("WORKER", "GITHUB_TOKEN이 설정되지 않았습니다. 스캔을 시작할 수 없습니다.");
@@ -659,22 +797,47 @@ const run = async (): Promise<void> => {
   }
 
   let cycleCount = 0;
+  let lastRetentionRunAt = 0;
+  let totalAutoInserted = 0;
+  let totalAutoErrors = 0;
+  let totalManualInserted = 0;
+  let totalManualJobsProcessed = 0;
+  let totalManualJobsErrored = 0;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
     cycleCount += 1;
     log("CYCLE", `───── 사이클 #${cycleCount} 시작 ─────`);
+    const cycleStartedAt = Date.now();
+    const cycleStartedIso = new Date(cycleStartedAt).toISOString();
+    let manualInserted = 0;
+    let manualJobsProcessed = 0;
+    let manualJobsErrored = 0;
+    let autoStats: AutoScanStats = {
+      inserted: 0,
+      eventsJobs: 0,
+      backfillCodeItems: 0,
+      backfillCommitItems: 0,
+      errors: 0
+    };
 
     try {
+      if (config.retentionDays > 0 && Date.now() - lastRetentionRunAt >= config.retentionRunIntervalMs) {
+        await runRetentionCleanup(config.retentionDays);
+        lastRetentionRunAt = Date.now();
+      }
+
       // 1) 수동/예약 스캔 job 대기열 처리 (하위 호환)
       await enqueueDueSchedules();
       const jobs = await fetchPendingJobs();
       if (jobs.length > 0) {
         log("JOBS", `대기 중인 scan_jobs ${jobs.length}건 처리`);
         for (const job of jobs) {
+          manualJobsProcessed += 1;
           await markJob({ id: job.id, status: "processing" });
           try {
             const found = await runJobScan(job.query);
+            manualInserted += found;
             if (found === 0) {
               log("JOBS", `job ${job.id.slice(0, 8)} 완료 – leaks 0건 (no leaks found)`);
               await markJob({
@@ -687,6 +850,7 @@ const run = async (): Promise<void> => {
             log("JOBS", `job ${job.id.slice(0, 8)} 완료 – ${found}건 leak INSERT`);
             await markJob({ id: job.id, status: "done" });
           } catch (error) {
+            manualJobsErrored += 1;
             logError("JOBS", `job ${job.id.slice(0, 8)} 오류: ${error}`);
             await markJob({
               id: job.id,
@@ -699,15 +863,43 @@ const run = async (): Promise<void> => {
 
       // 2) 자동 스캔 – scan_jobs 없이도 항상 실행
       log("AUTO", "자동 스캔 시작");
-      const autoFound = await runAutoScan();
-      log("AUTO", `자동 스캔 완료 – 이번 사이클에서 총 ${autoFound}건 새 leak INSERT`);
+      autoStats = await runAutoScan();
+      log("AUTO", `자동 스캔 완료 – 이번 사이클에서 총 ${autoStats.inserted}건 새 leak INSERT`);
 
-      if (autoFound === 0) {
+      if (autoStats.inserted === 0) {
         log("AUTO", "leak가 0건인 이유: Events에서 PushEvent가 없거나, 수집한 커밋/파일에서 패턴 매칭 없음, 또는 이미 중복(key_hash 충돌)된 키만 발견됨");
       }
     } catch (err) {
       logError("CYCLE", `사이클 오류: ${err}`);
     }
+
+    const cycleFinishedAt = Date.now();
+    const cycleDurationMs = cycleFinishedAt - cycleStartedAt;
+    totalAutoInserted += autoStats.inserted;
+    totalAutoErrors += autoStats.errors;
+    totalManualInserted += manualInserted;
+    totalManualJobsProcessed += manualJobsProcessed;
+    totalManualJobsErrored += manualJobsErrored;
+
+    await upsertRuntimeStatus("pipeline", {
+      cycleCount,
+      lastCycleStartedAt: cycleStartedIso,
+      lastCycleFinishedAt: new Date(cycleFinishedAt).toISOString(),
+      lastCycleDurationMs: cycleDurationMs,
+      lastAutoInserted: autoStats.inserted,
+      lastAutoEventsJobs: autoStats.eventsJobs,
+      lastAutoBackfillCodeItems: autoStats.backfillCodeItems,
+      lastAutoBackfillCommitItems: autoStats.backfillCommitItems,
+      lastAutoErrors: autoStats.errors,
+      lastManualInserted: manualInserted,
+      lastManualJobsProcessed: manualJobsProcessed,
+      lastManualJobsErrored: manualJobsErrored,
+      totalAutoInserted,
+      totalAutoErrors,
+      totalManualInserted,
+      totalManualJobsProcessed,
+      totalManualJobsErrored
+    }).catch((error) => logWarn("CYCLE", `파이프라인 상태 저장 실패: ${error}`));
 
     log("CYCLE", `───── 사이클 #${cycleCount} 종료 – ${config.pollIntervalMs / 1000}초 후 재시작 ─────\n`);
     await sleep(config.pollIntervalMs);

@@ -4,7 +4,8 @@ import type {
   LeaderboardEntry,
   LeakRecord,
   ProviderStat,
-  StatsSummary
+  StatsSummary,
+  WorkerRuntimeStatus
 } from "@leak/shared";
 
 type ScanJob = {
@@ -43,6 +44,7 @@ const ALL_PROVIDERS: ProviderDef[] = [
   { id: "kimi", label: "Kimi (Moonshot)", group: "ai" },
   { id: "glm", label: "GLM (Zhipu)", group: "ai" },
   { id: "deepseek", label: "DeepSeek", group: "ai" },
+  { id: "mistral", label: "Mistral", group: "ai" },
 
   // 기타 서비스
   { id: "stripe", label: "Stripe", group: "service" },
@@ -54,7 +56,7 @@ const ALL_PROVIDERS: ProviderDef[] = [
   { id: "supabase", label: "Supabase", group: "service" },
   { id: "vercel", label: "Vercel", group: "service" },
   { id: "npm", label: "NPM", group: "service" },
-  { id: "discord", label: "Discord", group: "service" },
+  { id: "discord", label: "Discord", group: "service" }
 ];
 
 const AI_PROVIDER_IDS = ALL_PROVIDERS.filter((p) => p.group === "ai").map((p) => p.id);
@@ -62,10 +64,8 @@ const AI_PROVIDER_IDS = ALL_PROVIDERS.filter((p) => p.group === "ai").map((p) =>
 const PROVIDER_LABELS: Record<string, string> = Object.fromEntries(
   ALL_PROVIDERS.map((p) => [p.id, p.label])
 );
-// 추가 라벨 (탐지는 되지만 수동 스캔 선택 목록에는 없는 것들)
 Object.assign(PROVIDER_LABELS, {
-  mistral: "Mistral",
-  private_key: "Private Key",
+  private_key: "Private Key"
 });
 
 type Page = "home" | "explore" | "leaderboard";
@@ -98,6 +98,53 @@ const buildFileUrl = (
   commitSha: string,
   filePath: string
 ): string => `https://github.com/${owner}/${repo}/blob/${commitSha}/${filePath}`;
+
+const formatResetMs = (value: number | null): string => {
+  if (!value || value <= 0) {
+    return "정상";
+  }
+  return `${Math.ceil(value / 1000)}초 대기`;
+};
+
+const formatQuota = (remaining: number | null, limit: number | null): string => {
+  if (remaining === null || limit === null || limit <= 0) {
+    return "N/A";
+  }
+  return `${remaining}/${limit}`;
+};
+
+const isStaleStatus = (iso: string | null, staleMs: number): boolean => {
+  if (!iso) {
+    return true;
+  }
+  const parsed = Date.parse(iso);
+  if (Number.isNaN(parsed)) {
+    return true;
+  }
+  return Date.now() - parsed > staleMs;
+};
+
+const formatUpdatedAt = (iso: string | null): string => {
+  if (!iso) {
+    return "업데이트 정보 없음";
+  }
+
+  const parsed = Date.parse(iso);
+  if (Number.isNaN(parsed)) {
+    return "업데이트 정보 없음";
+  }
+
+  const elapsedSec = Math.floor((Date.now() - parsed) / 1000);
+  if (elapsedSec < 60) {
+    return `${elapsedSec}초 전 갱신`;
+  }
+  const elapsedMin = Math.floor(elapsedSec / 60);
+  if (elapsedMin < 60) {
+    return `${elapsedMin}분 전 갱신`;
+  }
+  const elapsedHour = Math.floor(elapsedMin / 60);
+  return `${elapsedHour}시간 전 갱신`;
+};
 
 const useFetch = <T,>(path: string, fallback: T, unwrapData = true): T => {
   const [data, setData] = useState<T>(fallback);
@@ -175,6 +222,8 @@ export const App = () => {
   const [timeRange, setTimeRange] = useState<string>("all");
   const [sort, setSort] = useState<string>("newest");
   const [showScanPanel, setShowScanPanel] = useState(false);
+  const [compactWorkerStatus, setCompactWorkerStatus] = useState(false);
+  const [workerStaleMinutes, setWorkerStaleMinutes] = useState(2);
 
   // 수동 스캔: 멀티셀렉트 provider
   const [scanProviders, setScanProviders] = useState<Set<string>>(
@@ -199,6 +248,50 @@ export const App = () => {
     totalLeaks: 0,
     totalReposScanned: 0
   }, 30000);
+
+  const workerStatus = useAutoRefresh<WorkerRuntimeStatus>(
+    "/internal/worker-status",
+    {
+      retention: {
+        enabled: false,
+        retentionDays: 0,
+        lastRunAt: null,
+        lastDeleted: 0
+      },
+      rateLimit: {
+        eventsResetAfterMs: null,
+        eventsRemaining: null,
+        eventsLimit: null,
+        commitResetAfterMs: null,
+        commitRemaining: null,
+        commitLimit: null,
+        codeResetAfterMs: null,
+        codeRemaining: null,
+        codeLimit: null,
+        updatedAt: null
+      },
+      pipeline: {
+        cycleCount: 0,
+        lastCycleStartedAt: null,
+        lastCycleFinishedAt: null,
+        lastCycleDurationMs: 0,
+        lastAutoInserted: 0,
+        lastAutoEventsJobs: 0,
+        lastAutoBackfillCodeItems: 0,
+        lastAutoBackfillCommitItems: 0,
+        lastAutoErrors: 0,
+        lastManualInserted: 0,
+        lastManualJobsProcessed: 0,
+        lastManualJobsErrored: 0,
+        totalAutoInserted: 0,
+        totalAutoErrors: 0,
+        totalManualInserted: 0,
+        totalManualJobsProcessed: 0,
+        totalManualJobsErrored: 0
+      }
+    },
+    15000
+  );
 
   const leaderboard = useFetch<LeaderboardEntry[]>("/leaderboard", []);
   const activity = useFetch<ActivityPoint[]>("/activity", []);
@@ -536,6 +629,132 @@ export const App = () => {
     }
   }, [refreshLeaks]);
 
+  const workerStatusStale = isStaleStatus(workerStatus.rateLimit.updatedAt, workerStaleMinutes * 60000);
+
+  const renderWorkerStatusPanel = () => (
+    <section className="panel" style={{ marginTop: "1rem" }}>
+      <div className="panel-header">
+        <h2>워커 상태</h2>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <select
+            className="control-field"
+            style={{ padding: "6px 8px", fontSize: "12px", minWidth: "86px" }}
+            value={workerStaleMinutes}
+            onChange={(event) => setWorkerStaleMinutes(Number(event.target.value))}
+          >
+            <option value={1}>1m</option>
+            <option value={2}>2m</option>
+            <option value={5}>5m</option>
+          </select>
+          <button
+            className="quick-btn"
+            onClick={() => setCompactWorkerStatus((prev) => !prev)}
+          >
+            {compactWorkerStatus ? "상세" : "컴팩트"}
+          </button>
+          <span className={`panel-tag ${workerStatusStale ? "stale" : "live"}`}>
+            {workerStatusStale ? "STALE" : "LIVE"}
+          </span>
+        </div>
+      </div>
+      <div className="status-note">
+        {formatUpdatedAt(workerStatus.rateLimit.updatedAt)}
+      </div>
+      <div className={`worker-status-grid ${compactWorkerStatus ? "compact" : ""}`} style={{ marginTop: "0.75rem" }}>
+        <div className="metric-card small">
+          <span className="metric-label">보관 정책</span>
+          <span className="metric-value" style={{ fontSize: "16px" }}>
+            {workerStatus.retention.enabled
+              ? `${workerStatus.retention.retentionDays}일`
+              : "비활성"}
+          </span>
+        </div>
+        <div className="metric-card small">
+          <span className="metric-label">최근 정리 삭제</span>
+          <span className="metric-value" style={{ fontSize: "16px" }}>
+            {workerStatus.retention.lastDeleted}건
+          </span>
+        </div>
+        <div className="metric-card small">
+          <span className="metric-label">Events 잔여</span>
+          <span className="metric-value" style={{ fontSize: "16px" }}>
+            {formatQuota(workerStatus.rateLimit.eventsRemaining, workerStatus.rateLimit.eventsLimit)}
+          </span>
+        </div>
+        <div className="metric-card small">
+          <span className="metric-label">Commit 잔여</span>
+          <span className="metric-value" style={{ fontSize: "16px" }}>
+            {formatQuota(workerStatus.rateLimit.commitRemaining, workerStatus.rateLimit.commitLimit)}
+          </span>
+        </div>
+        <div className="metric-card small">
+          <span className="metric-label">Code 잔여</span>
+          <span className="metric-value" style={{ fontSize: "16px" }}>
+            {formatQuota(workerStatus.rateLimit.codeRemaining, workerStatus.rateLimit.codeLimit)}
+          </span>
+        </div>
+        <div className="metric-card small">
+          <span className="metric-label">Events 제한</span>
+          <span className="metric-value" style={{ fontSize: "16px" }}>
+            {formatResetMs(workerStatus.rateLimit.eventsResetAfterMs)}
+          </span>
+        </div>
+        <div className="metric-card small">
+          <span className="metric-label">최근 사이클(ms)</span>
+          <span className="metric-value" style={{ fontSize: "16px" }}>
+            {workerStatus.pipeline.lastCycleDurationMs}
+          </span>
+        </div>
+        <div className="metric-card small">
+          <span className="metric-label">최근 자동 삽입</span>
+          <span className="metric-value" style={{ fontSize: "16px" }}>
+            {workerStatus.pipeline.lastAutoInserted}
+          </span>
+        </div>
+        <div className="metric-card small">
+          <span className="metric-label">최근 백필 코드</span>
+          <span className="metric-value" style={{ fontSize: "16px" }}>
+            {workerStatus.pipeline.lastAutoBackfillCodeItems}
+          </span>
+        </div>
+        <div className="metric-card small">
+          <span className="metric-label">최근 백필 커밋</span>
+          <span className="metric-value" style={{ fontSize: "16px" }}>
+            {workerStatus.pipeline.lastAutoBackfillCommitItems}
+          </span>
+        </div>
+        <div className="metric-card small">
+          <span className="metric-label">최근 수동 오류</span>
+          <span className="metric-value" style={{ fontSize: "16px" }}>
+            {workerStatus.pipeline.lastManualJobsErrored}
+          </span>
+        </div>
+        {!compactWorkerStatus && (
+          <>
+            <div className="metric-card small">
+              <span className="metric-label">누적 자동 삽입</span>
+              <span className="metric-value" style={{ fontSize: "16px" }}>
+                {workerStatus.pipeline.totalAutoInserted}
+              </span>
+            </div>
+            <div className="metric-card small">
+              <span className="metric-label">누적 자동 오류</span>
+              <span className="metric-value" style={{ fontSize: "16px" }}>
+                {workerStatus.pipeline.totalAutoErrors}
+              </span>
+            </div>
+            <div className="metric-card small">
+              <span className="metric-label">누적 수동 처리</span>
+              <span className="metric-value" style={{ fontSize: "16px" }}>
+                {workerStatus.pipeline.totalManualJobsProcessed}
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+    </section>
+  );
+
   return (
     <div className="app">
       <div className="scanlines" aria-hidden="true" />
@@ -632,6 +851,7 @@ export const App = () => {
                 <span className="metric-value">{stats.totalReposScanned}</span>
               </div>
             </div>
+            {renderWorkerStatusPanel()}
           </section>
         </main>
       )}
@@ -882,6 +1102,7 @@ export const App = () => {
               {leaksLoading && <div className="loading">추가 결과를 불러오는 중...</div>}
             </section>
           </section>
+          {renderWorkerStatusPanel()}
         </main>
       )}
 
@@ -934,6 +1155,7 @@ export const App = () => {
               </div>
             </div>
           </section>
+          {renderWorkerStatusPanel()}
         </main>
       )}
     </div>

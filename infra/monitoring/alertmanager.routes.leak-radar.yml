@@ -1,0 +1,73 @@
+route:
+  receiver: default-null
+  group_by: ["alertname", "service", "env", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 2h
+  routes:
+    - matchers:
+        - service="leak-radar"
+        - env="production"
+        - severity="critical"
+      receiver: leak-radar-prod-pagerduty
+
+    - matchers:
+        - service="leak-radar"
+        - env="production"
+        - severity="warning"
+      receiver: leak-radar-prod-slack
+
+    - matchers:
+        - service="leak-radar"
+        - env="staging"
+      receiver: leak-radar-staging-slack
+
+    - matchers:
+        - service="leak-radar"
+        - env="local"
+      receiver: leak-radar-local-slack
+
+    - matchers:
+        - service="leak-radar"
+        - team="leak-platform"
+      receiver: leak-platform-slack
+
+receivers:
+  - name: default-null
+
+  - name: leak-radar-prod-slack
+    slack_configs:
+      - api_url: "${SLACK_WEBHOOK_URL}"
+        channel: "#leak-radar-prod-alerts"
+        title: "[{{ .CommonLabels.env }}] {{ .CommonLabels.alertname }}"
+        text: "{{ .CommonAnnotations.summary }}\n{{ .CommonAnnotations.description }}"
+
+  - name: leak-radar-staging-slack
+    slack_configs:
+      - api_url: "${SLACK_WEBHOOK_URL}"
+        channel: "#leak-radar-staging-alerts"
+        title: "[{{ .CommonLabels.env }}] {{ .CommonLabels.alertname }}"
+        text: "{{ .CommonAnnotations.summary }}\n{{ .CommonAnnotations.description }}"
+
+  - name: leak-radar-local-slack
+    slack_configs:
+      - api_url: "${SLACK_WEBHOOK_URL}"
+        channel: "#leak-radar-local-alerts"
+        title: "[{{ .CommonLabels.env }}] {{ .CommonLabels.alertname }}"
+        text: "{{ .CommonAnnotations.summary }}\n{{ .CommonAnnotations.description }}"
+
+  - name: leak-platform-slack
+    slack_configs:
+      - api_url: "${SLACK_WEBHOOK_URL}"
+        channel: "#leak-platform"
+        title: "[{{ .CommonLabels.env }}] {{ .CommonLabels.alertname }}"
+        text: "{{ .CommonAnnotations.summary }}\n{{ .CommonAnnotations.description }}"
+
+  - name: leak-radar-prod-pagerduty
+    pagerduty_configs:
+      - routing_key: "${PAGERDUTY_ROUTING_KEY}"
+        severity: "critical"
+        description: "{{ .CommonLabels.alertname }}"
+        details:
+          summary: "{{ .CommonAnnotations.summary }}"
+          description: "{{ .CommonAnnotations.description }}"

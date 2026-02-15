@@ -1,0 +1,74 @@
+groups:
+  - name: leak-radar-worker
+    rules:
+      - alert: LeakWorkerStatusStale
+        expr: leak_worker_status_age_ms > 300000
+        for: 5m
+        labels:
+          severity: warning
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "Leak Radar worker status is stale"
+          description: "worker status age is above 5 minutes"
+
+      - alert: LeakWorkerStatusStaleCritical
+        expr: leak_worker_status_age_ms > 900000
+        for: 10m
+        labels:
+          severity: critical
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "Leak Radar worker status is critically stale"
+          description: "worker status age is above 15 minutes"
+
+      - alert: LeakWorkerAutoErrorRatioHigh
+        expr: leak_worker_pipeline_last_auto_error_ratio > 0.3
+        for: 10m
+        labels:
+          severity: warning
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "Leak Radar auto scan error ratio high"
+          description: "auto scan error ratio is above 30%"
+
+      - alert: LeakWorkerAutoErrorRatioCritical
+        expr: leak_worker_pipeline_last_auto_error_ratio > 0.6
+        for: 10m
+        labels:
+          severity: critical
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "Leak Radar auto scan error ratio critical"
+          description: "auto scan error ratio is above 60%"
+
+      - alert: LeakWorkerCommitRateLimitExhausted
+        expr: leak_worker_ratelimit_remaining{api="commits"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "Leak Radar commit search rate limit exhausted"
+          description: "commit search remaining requests is zero"
+
+      - alert: LeakWorkerCommitRateLimitExhaustedCritical
+        expr: leak_worker_ratelimit_remaining{api="commits"} == 0 and leak_worker_ratelimit_reset_after_ms{api="commits"} > 180000
+        for: 5m
+        labels:
+          severity: critical
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "Leak Radar commit search rate limit exhausted (critical)"
+          description: "commit search remaining is zero and reset time exceeds 3 minutes"

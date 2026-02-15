@@ -300,6 +300,22 @@ select {
   color: var(--accent);
 }
 
+.panel-tag.live {
+  color: var(--accent);
+}
+
+.panel-tag.stale {
+  color: var(--danger);
+}
+
+.status-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .hero-panel {
   display: grid;
   gap: 18px;
@@ -323,6 +339,16 @@ select {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 16px;
+}
+
+.worker-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.worker-status-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
 .metric-card {
@@ -896,5 +922,9 @@ select {
   .scan-row {
     grid-template-columns: 1fr;
     gap: 6px;
+  }
+
+  .worker-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

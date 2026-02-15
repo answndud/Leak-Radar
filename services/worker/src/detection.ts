@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { AI_PROVIDER_IDS } from "@leak/shared";
 
 type MatchResult = {
   provider: string;
@@ -112,13 +113,13 @@ const isFalsePositive = (line: string, value: string): boolean => {
  */
 const PROVIDER_RULES: ProviderRule[] = [
   // ── OpenAI (확정적 prefix) ──
-  { provider: "openai", regex: /sk-proj-[a-zA-Z0-9_\-]{20,}/g, minLength: 28 },
-  { provider: "openai", regex: /sk-svcacct-[a-zA-Z0-9_\-]{20,}/g, minLength: 30 },
+  { provider: "openai", regex: /sk-proj-[a-zA-Z0-9_-]{20,}/g, minLength: 28 },
+  { provider: "openai", regex: /sk-svcacct-[a-zA-Z0-9_-]{20,}/g, minLength: 30 },
   // OpenAI 레거시: sk- + 48자 이상 (Kimi/DeepSeek는 보통 32자)
   { provider: "openai", regex: /sk-[a-zA-Z0-9]{48,}/g, minLength: 51 },
 
   // ── Anthropic (확정적 prefix) ──
-  { provider: "anthropic", regex: /sk-ant-[a-zA-Z0-9_\-]{20,}/g, minLength: 30 },
+  { provider: "anthropic", regex: /sk-ant-[a-zA-Z0-9_-]{20,}/g, minLength: 30 },
 
   // ── Google (API key) – AIzaSy 고정 prefix + 33자 ──
   { provider: "google", regex: /AIzaSy[0-9A-Za-z\-_]{33}/g, minLength: 39 },
@@ -141,10 +142,10 @@ const PROVIDER_RULES: ProviderRule[] = [
   { provider: "aws", regex: /ASIA[0-9A-Z]{16}/g, minLength: 20 },
 
   // ── Slack ──
-  { provider: "slack", regex: /xox[baprs]-[0-9A-Za-z\-]{24,}/g, minLength: 30 },
+  { provider: "slack", regex: /xox[baprs]-[0-9A-Za-z-]{24,}/g, minLength: 30 },
 
   // ── SendGrid ──
-  { provider: "sendgrid", regex: /SG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}/g, minLength: 66 },
+  { provider: "sendgrid", regex: /SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/g, minLength: 66 },
 
   // ── GitHub (PAT, fine-grained PAT) ──
   { provider: "github", regex: /ghp_[A-Za-z0-9]{36}/g, minLength: 40 },
@@ -156,7 +157,7 @@ const PROVIDER_RULES: ProviderRule[] = [
   { provider: "npm", regex: /npm_[A-Za-z0-9]{36}/g, minLength: 40 },
 
   // ── Firebase ──
-  { provider: "firebase", regex: /AAAA[A-Za-z0-9_\-]{7}:[A-Za-z0-9_\-]{140}/g, minLength: 152 },
+  { provider: "firebase", regex: /AAAA[A-Za-z0-9_-]{7}:[A-Za-z0-9_-]{140}/g, minLength: 152 },
 
   // ── Supabase ──
   { provider: "supabase", regex: /sbp_[a-f0-9]{40}/g, minLength: 44 },
@@ -209,7 +210,7 @@ const CONTEXT_RULES: ContextRule[] = [
   {
     provider: "anthropic",
     lineKeywords: /anthropic/i,
-    valueRegex: /sk-ant-[a-zA-Z0-9_\-]{10,}/g,
+    valueRegex: /sk-ant-[a-zA-Z0-9_-]{10,}/g,
     minLength: 20,
   },
   // GOOGLE_API_KEY / GEMINI_API_KEY
@@ -230,7 +231,7 @@ const CONTEXT_RULES: ContextRule[] = [
 
 /** AI 모델 provider 목록 */
 export const AI_PROVIDERS = new Set([
-  "openai", "anthropic", "google", "grok", "kimi", "glm", "deepseek", "mistral"
+  ...AI_PROVIDER_IDS
 ]);
 
 /**

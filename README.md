@@ -34,6 +34,12 @@ pnpm install
 GITHUB_TOKEN=여기에_토큰
 ```
 
+선택: 보관 정책 자동 정리(예: 30일)
+```bash
+WORKER_RETENTION_DAYS=30
+WORKER_RETENTION_INTERVAL_MS=3600000
+```
+
 ### 5) 전체 실행
 ```bash
 pnpm -w run dev:all
@@ -45,7 +51,10 @@ pnpm -w run dev:all
 - `GET /stats`
 - `GET /leaderboard`
 - `GET /activity`
+- `GET /internal/worker-status`
+- `GET /internal/metrics` (Prometheus 텍스트)
 - `POST /scan-requests` (providers 또는 query)
+  - providers는 서버에서 지원 목록 검증 후 처리
 
 정리용:
 - `DELETE /leaks`
@@ -57,11 +66,31 @@ pnpm -w run dev:all
 pnpm run test
 ```
 
+## 관측
+- 워커 내부 상태(JSON): `GET /internal/worker-status`
+- 메트릭(Prometheus): `GET /internal/metrics`
+  - retention enabled/days/deleted
+  - rate limit remaining/limit/reset
+  - pipeline cycle count/duration/inserted/error
+  - pipeline 누적 카운터(auto/manual inserted, errors, jobs)
+  - 파생 지표(auto/manual error ratio, auto insert ratio, status age)
+- 템플릿 파일
+  - Grafana: `infra/monitoring/grafana-dashboard.leak-radar-worker.json`
+    - 변수: `env`, `team`, `job`
+  - Alert rules:
+    - `infra/monitoring/alert-rules.leak-radar-worker.local.yml`
+    - `infra/monitoring/alert-rules.leak-radar-worker.staging.yml`
+    - `infra/monitoring/alert-rules.leak-radar-worker.production.yml`
+  - Alertmanager routes: `infra/monitoring/alertmanager.routes.leak-radar.yml`
+  - 운영 가이드: `OBSERVABILITY.md` (Runbook 포함)
+
 ## 참고 문서
 - 실행 가이드: `GUIDE.md`
 - 스캔 방식: `SCANNING.md`
 - 설계 개요: `DESIGN.md`
 - 보관/정리 정책: `RETENTION.md`
+- 관측/알림 가이드: `OBSERVABILITY.md`
+- 탐지 룰셋/fixture: `DETECTION_RULES.md`
 
 ## 주의
 - 원문 비밀키는 저장하지 않습니다.

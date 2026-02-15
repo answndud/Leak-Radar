@@ -9,6 +9,8 @@ export type ScanJob = {
 export type PollResult = {
   jobs: ScanJob[];
   resetAfterMs: number | null;
+  remaining: number | null;
+  limit: number | null;
 };
 
 const log = (tag: string, message: string): void => {
@@ -28,7 +30,12 @@ export const pollGitHub = async (): Promise<PollResult> => {
 
   if (events.ok && pushCount > 0) {
     log("POLL", `Events API 성공 – ${pushCount}개 PushEvent 커밋 수집`);
-    return { jobs: events.data!, resetAfterMs: events.resetAfterMs };
+    return {
+      jobs: events.data!,
+      resetAfterMs: events.resetAfterMs,
+      remaining: events.remaining,
+      limit: events.limit
+    };
   }
 
   if (!events.ok) {
@@ -46,15 +53,27 @@ export const pollGitHub = async (): Promise<PollResult> => {
     );
     if (backfill.ok && backfill.data) {
       log("POLL", `Commit Search 폴백 성공 – ${backfill.data.length}개 커밋`);
-      return { jobs: backfill.data, resetAfterMs: backfill.resetAfterMs };
+      return {
+        jobs: backfill.data,
+        resetAfterMs: backfill.resetAfterMs,
+        remaining: backfill.remaining,
+        limit: backfill.limit
+      };
     }
     log("POLL", "Commit Search 폴백도 결과 없음");
-    return { jobs: [], resetAfterMs: backfill.resetAfterMs };
+    return {
+      jobs: [],
+      resetAfterMs: backfill.resetAfterMs,
+      remaining: backfill.remaining,
+      limit: backfill.limit
+    };
   }
 
   return {
     jobs: [],
-    resetAfterMs: events.resetAfterMs
+    resetAfterMs: events.resetAfterMs,
+    remaining: events.remaining,
+    limit: events.limit
   };
 };
 
@@ -65,7 +84,17 @@ export const fetchBackfillJobs = async (query: string): Promise<PollResult> => {
   const config = loadConfig();
   const backfill = await fetchCommitBackfill(query, config.githubToken);
   if (backfill.ok && backfill.data) {
-    return { jobs: backfill.data, resetAfterMs: backfill.resetAfterMs };
+    return {
+      jobs: backfill.data,
+      resetAfterMs: backfill.resetAfterMs,
+      remaining: backfill.remaining,
+      limit: backfill.limit
+    };
   }
-  return { jobs: [], resetAfterMs: backfill.resetAfterMs };
+  return {
+    jobs: [],
+    resetAfterMs: backfill.resetAfterMs,
+    remaining: backfill.remaining,
+    limit: backfill.limit
+  };
 };

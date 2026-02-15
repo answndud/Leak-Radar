@@ -1,0 +1,93 @@
+groups:
+  - name: leak-radar-worker-production
+    rules:
+      - alert: LeakWorkerStatusStaleProd
+        expr: leak_worker_status_age_ms > 180000
+        for: 3m
+        labels:
+          severity: warning
+          profile: production
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "[prod] worker status stale"
+          description: "status age is above 3 minutes in production"
+
+      - alert: LeakWorkerStatusStaleCriticalProd
+        expr: leak_worker_status_age_ms > 600000
+        for: 5m
+        labels:
+          severity: critical
+          profile: production
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "[prod] worker status critically stale"
+          description: "status age is above 10 minutes in production"
+
+      - alert: LeakWorkerAutoErrorRatioHighProd
+        expr: leak_worker_pipeline_last_auto_error_ratio > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          profile: production
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "[prod] auto error ratio high"
+          description: "auto error ratio is above 20% in production"
+
+      - alert: LeakWorkerAutoErrorRatioCriticalProd
+        expr: leak_worker_pipeline_last_auto_error_ratio > 0.4
+        for: 5m
+        labels:
+          severity: critical
+          profile: production
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "[prod] auto error ratio critical"
+          description: "auto error ratio is above 40% in production"
+
+      - alert: LeakWorkerAutoInsertRatioLowProd
+        expr: leak_worker_pipeline_last_auto_insert_ratio < 0.03
+        for: 15m
+        labels:
+          severity: warning
+          profile: production
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "[prod] auto insert ratio low"
+          description: "auto insert ratio is below 3% in production"
+
+      - alert: LeakWorkerCommitRateLimitExhaustedProd
+        expr: leak_worker_ratelimit_remaining{api="commits"} == 0
+        for: 3m
+        labels:
+          severity: warning
+          profile: production
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "[prod] commit search rate limit exhausted"
+          description: "commit search remaining requests is zero in production"
+
+      - alert: LeakWorkerCommitRateLimitExhaustedCriticalProd
+        expr: leak_worker_ratelimit_remaining{api="commits"} == 0 and leak_worker_ratelimit_reset_after_ms{api="commits"} > 120000
+        for: 3m
+        labels:
+          severity: critical
+          profile: production
+          service: leak-radar
+          team: leak-platform
+          owner: security-ops
+        annotations:
+          summary: "[prod] commit search rate limit exhausted critically"
+          description: "commit search is exhausted and reset wait exceeds 2 minutes"

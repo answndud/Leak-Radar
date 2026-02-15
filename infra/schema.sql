@@ -63,3 +63,9 @@ CREATE TABLE IF NOT EXISTS scan_jobs (
 
 CREATE INDEX IF NOT EXISTS scan_jobs_status_created_at
   ON scan_jobs (status, created_at);
+
+CREATE TABLE IF NOT EXISTS worker_runtime_status (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
