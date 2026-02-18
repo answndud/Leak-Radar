@@ -19,6 +19,42 @@ type ScanJob = {
   finishedAt: string | null;
 };
 
+type AdminAuditEntry = {
+  id: string;
+  occurredAt: string;
+  actorId: string | null;
+  role: string;
+  action: string;
+  status: "allowed" | "denied" | "failed";
+  resource: string;
+  ip: string | null;
+  userAgent: string | null;
+  metadata: Record<string, unknown>;
+};
+
+type AdminAuditListResponse = {
+  data: AdminAuditEntry[];
+  nextCursor: string | null;
+};
+
+type AuditSortKey = "occurredAt" | "status" | "role" | "actorId" | "action" | "resource";
+type AuditSortDir = "asc" | "desc";
+type AuditStatusFilter = "all" | AdminAuditEntry["status"];
+type AuditRoleFilter = "all" | "ops" | "read" | "write" | "danger";
+type AuditSinceHours = "0" | "1" | "6" | "24" | "168";
+type AuditPreset = {
+  id: string;
+  label: string;
+  status: AuditStatusFilter;
+  role: AuditRoleFilter;
+  sinceHours: AuditSinceHours;
+  sortKey: AuditSortKey;
+  sortDir: AuditSortDir;
+  actorFilter?: string;
+  searchQuery?: string;
+  custom?: boolean;
+};
+
 type LeakResponse = {
   data: LeakRecord[];
   page: number;
@@ -72,6 +108,165 @@ Object.assign(PROVIDER_LABELS, {
 type Page = "home" | "explore" | "leaderboard";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:4000";
+const ADMIN_API_KEY = import.meta.env.VITE_ADMIN_API_KEY;
+const DEFAULT_ADMIN_ACTOR_ID = import.meta.env.VITE_ADMIN_ACTOR_ID;
+const ADMIN_ACTOR_STORAGE_KEY = "apiradar-admin-actor-id";
+const AUDIT_CUSTOM_PRESETS_STORAGE_KEY = "apiradar-audit-custom-presets";
+const AUDIT_STATUS_VALUES: AuditStatusFilter[] = ["all", "allowed", "denied", "failed"];
+const AUDIT_ROLE_VALUES: AuditRoleFilter[] = ["all", "ops", "read", "write", "danger"];
+const AUDIT_SINCE_VALUES: AuditSinceHours[] = ["0", "1", "6", "24", "168"];
+const AUDIT_SORT_KEYS: AuditSortKey[] = ["occurredAt", "status", "role", "actorId", "action", "resource"];
+const AUDIT_SORT_DIRECTIONS: AuditSortDir[] = ["asc", "desc"];
+const AUDIT_PRESETS: AuditPreset[] = [
+  {
+    id: "failed24h",
+    label: "실패 24h",
+    status: "failed",
+    role: "all",
+    sinceHours: "24",
+    sortKey: "occurredAt",
+    sortDir: "desc"
+  },
+  {
+    id: "danger7d",
+    label: "DANGER 7d",
+    status: "all",
+    role: "danger",
+    sinceHours: "168",
+    sortKey: "occurredAt",
+    sortDir: "desc"
+  },
+  {
+    id: "denied24h",
+    label: "거부 24h",
+    status: "denied",
+    role: "all",
+    sinceHours: "24",
+    sortKey: "occurredAt",
+    sortDir: "desc"
+  }
+];
+
+const readUrlParam = (key: string): string | undefined => {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+  const value = new URLSearchParams(window.location.search).get(key);
+  if (!value) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const toAuditStatusFilter = (value: string | undefined): AuditStatusFilter => {
+  if (value && AUDIT_STATUS_VALUES.includes(value as AuditStatusFilter)) {
+    return value as AuditStatusFilter;
+  }
+  return "all";
+};
+
+const toAuditRoleFilter = (value: string | undefined): AuditRoleFilter => {
+  if (value && AUDIT_ROLE_VALUES.includes(value as AuditRoleFilter)) {
+    return value as AuditRoleFilter;
+  }
+  return "all";
+};
+
+const toAuditSinceHours = (value: string | undefined): AuditSinceHours => {
+  if (value && AUDIT_SINCE_VALUES.includes(value as AuditSinceHours)) {
+    return value as AuditSinceHours;
+  }
+  return "24";
+};
+
+const toAuditSortKey = (value: string | undefined): AuditSortKey => {
+  if (value && AUDIT_SORT_KEYS.includes(value as AuditSortKey)) {
+    return value as AuditSortKey;
+  }
+  return "occurredAt";
+};
+
+const toAuditSortDir = (value: string | undefined): AuditSortDir => {
+  if (value && AUDIT_SORT_DIRECTIONS.includes(value as AuditSortDir)) {
+    return value as AuditSortDir;
+  }
+  return "desc";
+};
+
+const dedupeAuditEntries = (entries: AdminAuditEntry[]): AdminAuditEntry[] => {
+  const seen = new Set<string>();
+  const output: AdminAuditEntry[] = [];
+  for (const entry of entries) {
+    if (seen.has(entry.id)) {
+      continue;
+    }
+    seen.add(entry.id);
+    output.push(entry);
+  }
+  return output;
+};
+
+const toCustomAuditPreset = (value: unknown): AuditPreset | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id.trim() : "";
+  const label = typeof record.label === "string" ? record.label.trim() : "";
+  if (!id || !label) {
+    return null;
+  }
+
+  const status = toAuditStatusFilter(typeof record.status === "string" ? record.status : undefined);
+  const role = toAuditRoleFilter(typeof record.role === "string" ? record.role : undefined);
+  const sinceHours = toAuditSinceHours(typeof record.sinceHours === "string" ? record.sinceHours : undefined);
+  const sortKey = toAuditSortKey(typeof record.sortKey === "string" ? record.sortKey : undefined);
+  const sortDir = toAuditSortDir(typeof record.sortDir === "string" ? record.sortDir : undefined);
+  const actorFilter = typeof record.actorFilter === "string" ? record.actorFilter.trim() : "";
+  const searchQuery = typeof record.searchQuery === "string" ? record.searchQuery.trim() : "";
+
+  return {
+    id,
+    label,
+    status,
+    role,
+    sinceHours,
+    sortKey,
+    sortDir,
+    actorFilter,
+    searchQuery,
+    custom: true
+  };
+};
+
+const readAdminActorId = (): string | undefined => {
+  if (typeof window === "undefined") {
+    return DEFAULT_ADMIN_ACTOR_ID;
+  }
+  const saved = localStorage.getItem(ADMIN_ACTOR_STORAGE_KEY)?.trim();
+  if (saved) {
+    return saved;
+  }
+  return DEFAULT_ADMIN_ACTOR_ID;
+};
+
+const apiFetch = (path: string, init?: RequestInit): Promise<Response> => {
+  const headers = new Headers(init?.headers);
+  if (ADMIN_API_KEY) {
+    headers.set("x-leak-radar-admin-key", ADMIN_API_KEY);
+  }
+  const actorId = readAdminActorId();
+  if (actorId) {
+    headers.set("x-leak-radar-admin-id", actorId);
+  }
+
+  return fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers
+  });
+};
 
 const timeAgo = (iso: string): string => {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -154,7 +349,7 @@ const useFetch = <T,>(path: string, fallback: T, unwrapData = true): T => {
     let active = true;
     const load = async () => {
       try {
-        const response = await fetch(`${API_BASE}${path}`);
+        const response = await apiFetch(path);
         if (!response.ok) {
           return;
         }
@@ -190,7 +385,7 @@ const useAutoRefresh = <T,>(
     let active = true;
     const load = async () => {
       try {
-        const response = await fetch(`${API_BASE}${path}`);
+        const response = await apiFetch(path);
         if (!response.ok) {
           return;
         }
@@ -225,6 +420,37 @@ export const App = () => {
   const [showScanPanel, setShowScanPanel] = useState(false);
   const [compactWorkerStatus, setCompactWorkerStatus] = useState(false);
   const [workerStaleMinutes, setWorkerStaleMinutes] = useState(2);
+  const [adminActorId, setAdminActorId] = useState("");
+  const [auditStatusFilter, setAuditStatusFilter] = useState<AuditStatusFilter>(() =>
+    toAuditStatusFilter(readUrlParam("audit_status"))
+  );
+  const [auditRoleFilter, setAuditRoleFilter] = useState<AuditRoleFilter>(() =>
+    toAuditRoleFilter(readUrlParam("audit_role"))
+  );
+  const [auditActorFilter, setAuditActorFilter] = useState<string>(() =>
+    readUrlParam("audit_actor") ?? ""
+  );
+  const [auditSinceHours, setAuditSinceHours] = useState<AuditSinceHours>(() =>
+    toAuditSinceHours(readUrlParam("audit_since"))
+  );
+  const [auditSearchQuery, setAuditSearchQuery] = useState<string>(() =>
+    readUrlParam("audit_q") ?? ""
+  );
+  const [auditSortKey, setAuditSortKey] = useState<AuditSortKey>(() =>
+    toAuditSortKey(readUrlParam("audit_sort"))
+  );
+  const [auditSortDir, setAuditSortDir] = useState<AuditSortDir>(() =>
+    toAuditSortDir(readUrlParam("audit_dir"))
+  );
+  const [selectedAudit, setSelectedAudit] = useState<AdminAuditEntry | null>(null);
+  const [customAuditPresets, setCustomAuditPresets] = useState<AuditPreset[]>([]);
+  const [newPresetLabel, setNewPresetLabel] = useState("");
+  const [auditLogs, setAuditLogs] = useState<AdminAuditEntry[]>([]);
+  const [auditNextCursor, setAuditNextCursor] = useState<string | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditLoadError, setAuditLoadError] = useState("");
+  const auditLoadingRef = useRef(false);
+  const auditSentinelRef = useRef<HTMLDivElement | null>(null);
 
   // 수동 스캔: 멀티셀렉트 provider
   const [scanProviders, setScanProviders] = useState<Set<string>>(
@@ -318,6 +544,134 @@ export const App = () => {
 
   const leaderboard = useFetch<LeaderboardEntry[]>("/leaderboard", []);
   const activity = useFetch<ActivityPoint[]>("/activity", []);
+  const auditLogsPathBase = useMemo(() => {
+    const params = new URLSearchParams();
+    params.set("limit", "25");
+    if (auditStatusFilter !== "all") {
+      params.set("status", auditStatusFilter);
+    }
+    if (auditRoleFilter !== "all") {
+      params.set("role", auditRoleFilter);
+    }
+    if (auditSinceHours !== "0") {
+      params.set("sinceHours", auditSinceHours);
+    }
+    const actor = auditActorFilter.trim();
+    if (actor.length > 0) {
+      params.set("actorId", actor);
+    }
+    return `/internal/audit-logs?${params.toString()}`;
+  }, [auditActorFilter, auditRoleFilter, auditSinceHours, auditStatusFilter]);
+
+  const loadAuditLogs = useCallback(async (cursor?: string, append = false): Promise<void> => {
+    if (auditLoadingRef.current) {
+      return;
+    }
+    auditLoadingRef.current = true;
+    setAuditLoading(true);
+    setAuditLoadError("");
+    try {
+      const path = cursor
+        ? `${auditLogsPathBase}&cursor=${encodeURIComponent(cursor)}`
+        : auditLogsPathBase;
+      const response = await apiFetch(path);
+      if (!response.ok) {
+        setAuditLoadError("감사로그를 불러오지 못했습니다.");
+        return;
+      }
+      const payload = (await response.json()) as AdminAuditListResponse;
+      const incoming = payload.data ?? [];
+      setAuditLogs((prev) => (append ? dedupeAuditEntries([...prev, ...incoming]) : incoming));
+      setAuditNextCursor(payload.nextCursor ?? null);
+    } catch {
+      setAuditLoadError("감사로그를 불러오지 못했습니다.");
+    } finally {
+      auditLoadingRef.current = false;
+      setAuditLoading(false);
+    }
+  }, [auditLogsPathBase]);
+
+  useEffect(() => {
+    void loadAuditLogs(undefined, false);
+  }, [loadAuditLogs]);
+
+  const loadMoreAuditLogs = useCallback(() => {
+    if (!auditNextCursor || auditLoadingRef.current) {
+      return;
+    }
+    void loadAuditLogs(auditNextCursor, true);
+  }, [auditNextCursor, loadAuditLogs]);
+
+  useEffect(() => {
+    const target = auditSentinelRef.current;
+    if (!target) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const first = entries[0];
+        if (!first?.isIntersecting) {
+          return;
+        }
+        loadMoreAuditLogs();
+      },
+      {
+        root: null,
+        rootMargin: "160px 0px",
+        threshold: 0.05
+      }
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [loadMoreAuditLogs]);
+
+  const displayedAuditLogs = useMemo(() => {
+    const needle = auditSearchQuery.trim().toLowerCase();
+    const filtered = needle.length === 0
+      ? auditLogs
+      : auditLogs.filter((item) => {
+        const haystack = [
+          item.actorId ?? "",
+          item.role,
+          item.status,
+          item.action,
+          item.resource,
+          item.ip ?? "",
+          item.userAgent ?? "",
+          item.occurredAt
+        ].join(" ").toLowerCase();
+        return haystack.includes(needle);
+      });
+
+    const sorted = [...filtered].sort((a, b) => {
+      const getValue = (item: AdminAuditEntry): string => {
+        if (auditSortKey === "occurredAt") {
+          return item.occurredAt;
+        }
+        if (auditSortKey === "actorId") {
+          return item.actorId ?? "";
+        }
+        return String(item[auditSortKey] ?? "");
+      };
+
+      const left = getValue(a);
+      const right = getValue(b);
+
+      if (auditSortKey === "occurredAt") {
+        const leftMs = Date.parse(left);
+        const rightMs = Date.parse(right);
+        const diff = leftMs - rightMs;
+        return auditSortDir === "asc" ? diff : -diff;
+      }
+
+      const compared = left.localeCompare(right);
+      return auditSortDir === "asc" ? compared : -compared;
+    });
+
+    return sorted;
+  }, [auditLogs, auditSearchQuery, auditSortDir, auditSortKey]);
 
   const activityPath = useMemo(() => {
     if (activity.length === 0) {
@@ -352,12 +706,92 @@ export const App = () => {
     if (saved === "light" || saved === "dark") {
       setTheme(saved);
     }
+
+    const savedActor = localStorage.getItem(ADMIN_ACTOR_STORAGE_KEY);
+    if (savedActor && savedActor.trim().length > 0) {
+      setAdminActorId(savedActor);
+      return;
+    }
+    if (DEFAULT_ADMIN_ACTOR_ID) {
+      setAdminActorId(DEFAULT_ADMIN_ACTOR_ID);
+    }
+
+    const savedPresetsRaw = localStorage.getItem(AUDIT_CUSTOM_PRESETS_STORAGE_KEY);
+    if (savedPresetsRaw) {
+      try {
+        const parsed = JSON.parse(savedPresetsRaw) as unknown;
+        if (Array.isArray(parsed)) {
+          const normalized = parsed
+            .map((item) => toCustomAuditPreset(item))
+            .filter((item): item is AuditPreset => item !== null);
+          setCustomAuditPresets(normalized);
+        }
+      } catch {
+        // ignore preset parsing errors
+      }
+    }
   }, []);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("apiradar-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    const trimmed = adminActorId.trim();
+    if (!trimmed) {
+      localStorage.removeItem(ADMIN_ACTOR_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(ADMIN_ACTOR_STORAGE_KEY, trimmed);
+  }, [adminActorId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (customAuditPresets.length === 0) {
+      localStorage.removeItem(AUDIT_CUSTOM_PRESETS_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(AUDIT_CUSTOM_PRESETS_STORAGE_KEY, JSON.stringify(customAuditPresets));
+  }, [customAuditPresets]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    const params = url.searchParams;
+
+    const setOrDelete = (key: string, value: string | undefined): void => {
+      if (!value || value.length === 0) {
+        params.delete(key);
+        return;
+      }
+      params.set(key, value);
+    };
+
+    setOrDelete("audit_status", auditStatusFilter === "all" ? undefined : auditStatusFilter);
+    setOrDelete("audit_role", auditRoleFilter === "all" ? undefined : auditRoleFilter);
+    setOrDelete("audit_actor", auditActorFilter.trim() || undefined);
+    setOrDelete("audit_since", auditSinceHours === "24" ? undefined : auditSinceHours);
+    setOrDelete("audit_q", auditSearchQuery.trim() || undefined);
+    setOrDelete("audit_sort", auditSortKey === "occurredAt" ? undefined : auditSortKey);
+    setOrDelete("audit_dir", auditSortDir === "desc" ? undefined : auditSortDir);
+
+    const next = `${url.pathname}${params.toString().length > 0 ? `?${params.toString()}` : ""}${url.hash}`;
+    window.history.replaceState({}, "", next);
+  }, [
+    auditActorFilter,
+    auditRoleFilter,
+    auditSearchQuery,
+    auditSinceHours,
+    auditSortDir,
+    auditSortKey,
+    auditStatusFilter
+  ]);
 
   const toggleScanProvider = (id: string) => {
     setScanProviders((prev) => {
@@ -394,7 +828,7 @@ export const App = () => {
     try {
       setScanError("");
       setScanStatus("scanning");
-      const response = await fetch(`${API_BASE}/scan-requests`, {
+      const response = await apiFetch("/scan-requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ providers: Array.from(scanProviders) })
@@ -421,7 +855,7 @@ export const App = () => {
     const startedAt = Date.now();
     const timeoutMs = 120000;
     while (Date.now() - startedAt < timeoutMs) {
-      const response = await fetch(`${API_BASE}/scan-jobs/${id}`);
+      const response = await apiFetch(`/scan-jobs/${id}`);
       if (!response.ok) {
         setScanStatus("error");
         setScanError("스캔 상태 확인에 실패했습니다.");
@@ -469,7 +903,7 @@ export const App = () => {
     const loadLeaks = async () => {
       setLeaksLoading(true);
       try {
-        const response = await fetch(`${API_BASE}${leaksQuery}`);
+        const response = await apiFetch(leaksQuery);
         if (!response.ok) {
           return;
         }
@@ -623,7 +1057,7 @@ export const App = () => {
     }
     setResetting(true);
     try {
-      const response = await fetch(`${API_BASE}/leaks`, { method: "DELETE" });
+      const response = await apiFetch("/leaks", { method: "DELETE" });
       if (response.ok) {
         setLeaks([]);
         setLeaksTotal(0);
@@ -640,7 +1074,7 @@ export const App = () => {
   const removeDuplicates = useCallback(async () => {
     setDeduping(true);
     try {
-      const response = await fetch(`${API_BASE}/leaks/duplicates`, { method: "DELETE" });
+      const response = await apiFetch("/leaks/duplicates", { method: "DELETE" });
       if (response.ok) {
         const data = (await response.json()) as { deleted: number };
         if (data.deleted > 0) {
@@ -653,6 +1087,297 @@ export const App = () => {
   }, [refreshLeaks]);
 
   const workerStatusStale = isStaleStatus(workerStatus.rateLimit.updatedAt, workerStaleMinutes * 60000);
+
+  const formatAuditStatus = (status: AdminAuditEntry["status"]): string => {
+    if (status === "allowed") {
+      return "허용";
+    }
+    if (status === "denied") {
+      return "거부";
+    }
+    return "실패";
+  };
+
+  const formatAuditRole = (role: string): string => role.toUpperCase();
+
+  const exportAuditCsv = useCallback(() => {
+    const escapeCell = (value: string): string => `"${value.replaceAll("\"", "\"\"")}"`;
+    const rows = [
+      ["occurred_at", "status", "role", "actor_id", "action", "resource", "ip", "user_agent"]
+    ];
+
+    for (const item of displayedAuditLogs) {
+      rows.push([
+        item.occurredAt,
+        item.status,
+        item.role,
+        item.actorId ?? "",
+        item.action,
+        item.resource,
+        item.ip ?? "",
+        item.userAgent ?? ""
+      ]);
+    }
+
+    const csv = rows
+      .map((row) => row.map((cell) => escapeCell(cell)).join(","))
+      .join("\n");
+
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 19).replaceAll(":", "-");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `apiradar-admin-audit-${dateStr}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [displayedAuditLogs]);
+
+  const toggleAuditSort = (key: AuditSortKey): void => {
+    if (auditSortKey === key) {
+      setAuditSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setAuditSortKey(key);
+    setAuditSortDir(key === "occurredAt" ? "desc" : "asc");
+  };
+
+  const renderAuditSortLabel = (key: AuditSortKey, label: string): string => {
+    if (auditSortKey !== key) {
+      return `${label} ·`;
+    }
+    return `${label} ${auditSortDir === "asc" ? "▲" : "▼"}`;
+  };
+
+  const copyAuditMetadata = useCallback(async () => {
+    if (!selectedAudit) {
+      return;
+    }
+    const text = JSON.stringify(selectedAudit.metadata, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // ignore clipboard errors
+    }
+  }, [selectedAudit]);
+
+  const copyCurrentAuditLink = useCallback(async () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+    } catch {
+      // ignore clipboard errors
+    }
+  }, []);
+
+  const applyAuditPreset = (preset: AuditPreset): void => {
+    setAuditStatusFilter(preset.status);
+    setAuditRoleFilter(preset.role);
+    setAuditSinceHours(preset.sinceHours);
+    setAuditSortKey(preset.sortKey);
+    setAuditSortDir(preset.sortDir);
+    setAuditActorFilter(preset.actorFilter ?? "");
+    setAuditSearchQuery(preset.searchQuery ?? "");
+  };
+
+  const saveCurrentAuditPreset = (): void => {
+    const label = newPresetLabel.trim();
+    if (label.length < 2) {
+      return;
+    }
+
+    const preset: AuditPreset = {
+      id: `custom-${Date.now().toString(36)}`,
+      label,
+      status: auditStatusFilter,
+      role: auditRoleFilter,
+      sinceHours: auditSinceHours,
+      sortKey: auditSortKey,
+      sortDir: auditSortDir,
+      actorFilter: auditActorFilter.trim(),
+      searchQuery: auditSearchQuery.trim(),
+      custom: true
+    };
+
+    setCustomAuditPresets((prev) => [preset, ...prev].slice(0, 12));
+    setNewPresetLabel("");
+  };
+
+  const removeCustomAuditPreset = (id: string): void => {
+    setCustomAuditPresets((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const allAuditPresets = [...AUDIT_PRESETS, ...customAuditPresets];
+
+  const renderAuditLogsPanel = () => (
+    <section className="panel" style={{ marginTop: "1rem" }}>
+      <div className="panel-header">
+        <h2>관리자 감사로그</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <select
+            className="control-field"
+            style={{ padding: "6px 8px", minWidth: "110px", fontSize: "12px" }}
+            value={auditStatusFilter}
+            onChange={(event) => setAuditStatusFilter(toAuditStatusFilter(event.target.value))}
+          >
+            <option value="all">전체 상태</option>
+            <option value="allowed">허용</option>
+            <option value="denied">거부</option>
+            <option value="failed">실패</option>
+          </select>
+          <select
+            className="control-field"
+            style={{ padding: "6px 8px", minWidth: "110px", fontSize: "12px" }}
+            value={auditRoleFilter}
+            onChange={(event) => setAuditRoleFilter(toAuditRoleFilter(event.target.value))}
+          >
+            <option value="all">전체 역할</option>
+            <option value="ops">OPS</option>
+            <option value="read">READ</option>
+            <option value="write">WRITE</option>
+            <option value="danger">DANGER</option>
+          </select>
+          <select
+            className="control-field"
+            style={{ padding: "6px 8px", minWidth: "104px", fontSize: "12px" }}
+            value={auditSinceHours}
+            onChange={(event) => setAuditSinceHours(toAuditSinceHours(event.target.value))}
+          >
+            <option value="0">전체 기간</option>
+            <option value="1">1시간</option>
+            <option value="6">6시간</option>
+            <option value="24">24시간</option>
+            <option value="168">7일</option>
+          </select>
+          <input
+            className="control-field"
+            style={{ padding: "6px 8px", minWidth: "130px", fontSize: "12px" }}
+            value={auditActorFilter}
+            onChange={(event) => setAuditActorFilter(event.target.value)}
+            placeholder="actor id"
+          />
+          <button className="action-btn small" onClick={exportAuditCsv}>
+            CSV 내보내기
+          </button>
+          <span className="panel-tag">최근 25건</span>
+        </div>
+      </div>
+      <div className="audit-toolbar">
+        <input
+          className="control-field"
+          style={{ padding: "6px 8px", minWidth: "180px", fontSize: "12px" }}
+          value={auditSearchQuery}
+          onChange={(event) => setAuditSearchQuery(event.target.value)}
+          placeholder="로그 검색"
+        />
+        <div className="audit-presets">
+          {allAuditPresets.map((preset) => (
+            <span key={preset.id} className="audit-preset-item">
+              <button
+                className="quick-btn audit-preset-btn"
+                onClick={() => applyAuditPreset(preset)}
+              >
+                {preset.custom ? `★ ${preset.label}` : preset.label}
+              </button>
+              {preset.custom && (
+                <button
+                  className="quick-btn audit-preset-remove"
+                  onClick={() => removeCustomAuditPreset(preset.id)}
+                  title={`${preset.label} 삭제`}
+                >
+                  x
+                </button>
+              )}
+            </span>
+          ))}
+          <input
+            className="control-field"
+            style={{ padding: "6px 8px", minWidth: "120px", fontSize: "12px" }}
+            value={newPresetLabel}
+            onChange={(event) => setNewPresetLabel(event.target.value)}
+            placeholder="프리셋 이름"
+          />
+          <button
+            className="action-btn small"
+            onClick={saveCurrentAuditPreset}
+            disabled={newPresetLabel.trim().length < 2}
+          >
+            현재 필터 저장
+          </button>
+          <button className="action-btn small" onClick={() => void copyCurrentAuditLink()}>
+            필터 링크 복사
+          </button>
+        </div>
+        <span className="status-note" style={{ margin: 0 }}>
+          {displayedAuditLogs.length} / {auditLogs.length}건 표시
+        </span>
+      </div>
+      {auditLoadError ? (
+        <div className="empty">{auditLoadError}</div>
+      ) : auditLoading && displayedAuditLogs.length === 0 ? (
+        <div className="empty">감사로그를 불러오는 중입니다...</div>
+      ) : displayedAuditLogs.length === 0 ? (
+        <div className="empty">감사로그가 없거나 권한이 없습니다.</div>
+      ) : (
+        <div className="audit-table-wrap">
+          <table className="audit-table">
+            <thead>
+              <tr>
+                <th><button className="audit-sort" onClick={() => toggleAuditSort("occurredAt")}>{renderAuditSortLabel("occurredAt", "시각")}</button></th>
+                <th><button className="audit-sort" onClick={() => toggleAuditSort("status")}>{renderAuditSortLabel("status", "상태")}</button></th>
+                <th><button className="audit-sort" onClick={() => toggleAuditSort("role")}>{renderAuditSortLabel("role", "역할")}</button></th>
+                <th><button className="audit-sort" onClick={() => toggleAuditSort("actorId")}>{renderAuditSortLabel("actorId", "액터")}</button></th>
+                <th><button className="audit-sort" onClick={() => toggleAuditSort("action")}>{renderAuditSortLabel("action", "액션")}</button></th>
+                <th><button className="audit-sort" onClick={() => toggleAuditSort("resource")}>{renderAuditSortLabel("resource", "리소스")}</button></th>
+                <th>상세</th>
+              </tr>
+            </thead>
+            <tbody>
+              {displayedAuditLogs.map((item) => (
+                <tr key={item.id}>
+                  <td>{timeAgo(item.occurredAt)}</td>
+                  <td>
+                    <span className={`audit-status ${item.status}`}>{formatAuditStatus(item.status)}</span>
+                  </td>
+                  <td>{formatAuditRole(item.role)}</td>
+                  <td>{item.actorId ?? "(미지정)"}</td>
+                  <td>{item.action}</td>
+                  <td>{item.resource}</td>
+                  <td>
+                    <button className="quick-btn" onClick={() => setSelectedAudit(item)}>
+                      보기
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="audit-footer">
+        <button
+          className="quick-btn"
+          onClick={() => void loadAuditLogs(undefined, false)}
+          disabled={auditLoading}
+        >
+          새로고침
+        </button>
+        <button
+          className="action-btn small"
+          onClick={loadMoreAuditLogs}
+          disabled={!auditNextCursor || auditLoading}
+        >
+          {auditLoading ? "불러오는 중..." : auditNextCursor ? "더 보기" : "마지막 페이지"}
+        </button>
+      </div>
+      <div ref={auditSentinelRef} className="audit-sentinel" aria-hidden="true" />
+    </section>
+  );
 
   const renderWorkerStatusPanel = () => (
     <section className="panel" style={{ marginTop: "1rem" }}>
@@ -758,6 +1483,12 @@ export const App = () => {
             {workerSlo.met.overall ? "준수" : "위반"}
           </span>
         </div>
+        <div className="metric-card small">
+          <span className="metric-label">SLO 신선도 기준</span>
+          <span className="metric-value" style={{ fontSize: "16px" }}>
+            {Math.round(workerSlo.thresholds.statusAgeMsMax / 1000)}초
+          </span>
+        </div>
         {!compactWorkerStatus && (
           <>
             <div className="metric-card small">
@@ -782,6 +1513,18 @@ export const App = () => {
               <span className="metric-label">SLO 자동 오류율</span>
               <span className="metric-value" style={{ fontSize: "16px" }}>
                 {Math.round(workerSlo.values.autoErrorRatio * 100)}%
+              </span>
+            </div>
+            <div className="metric-card small">
+              <span className="metric-label">SLO 자동 오류 기준</span>
+              <span className="metric-value" style={{ fontSize: "16px" }}>
+                {Math.round(workerSlo.thresholds.autoErrorRatioMax * 100)}%
+              </span>
+            </div>
+            <div className="metric-card small">
+              <span className="metric-label">현재 상태 age(ms)</span>
+              <span className="metric-value" style={{ fontSize: "16px" }}>
+                {workerSlo.values.statusAgeMs}
               </span>
             </div>
           </>
@@ -813,6 +1556,30 @@ export const App = () => {
           </div>
         </div>
       )}
+      {selectedAudit && (
+        <div className="scan-overlay" onClick={() => setSelectedAudit(null)}>
+          <div className="scan-overlay-card audit-detail" onClick={(event) => event.stopPropagation()}>
+            <div className="panel-header" style={{ marginBottom: "12px" }}>
+              <h2 style={{ margin: 0 }}>감사로그 상세</h2>
+              <button className="quick-btn" onClick={() => setSelectedAudit(null)}>닫기</button>
+            </div>
+            <div className="meta"><span className="label">상태</span>{formatAuditStatus(selectedAudit.status)}</div>
+            <div className="meta"><span className="label">역할</span>{formatAuditRole(selectedAudit.role)}</div>
+            <div className="meta"><span className="label">액터</span>{selectedAudit.actorId ?? "(미지정)"}</div>
+            <div className="meta"><span className="label">액션</span>{selectedAudit.action}</div>
+            <div className="meta"><span className="label">리소스</span>{selectedAudit.resource}</div>
+            <div className="meta"><span className="label">IP</span>{selectedAudit.ip ?? "-"}</div>
+            <div className="meta"><span className="label">UA</span>{selectedAudit.userAgent ?? "-"}</div>
+            <div className="scan-overlay-text" style={{ marginTop: "10px", textAlign: "left" }}>metadata</div>
+            <pre className="audit-metadata">{JSON.stringify(selectedAudit.metadata, null, 2)}</pre>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
+              <button className="action-btn small" onClick={() => void copyAuditMetadata()}>
+                metadata 복사
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <header className="topbar">
         <div className="logo">
           <span className="logo-icon">▲</span>
@@ -822,6 +1589,13 @@ export const App = () => {
           </div>
         </div>
         <div className="topbar-meta">
+          <input
+            className="identity-input"
+            value={adminActorId}
+            onChange={(event) => setAdminActorId(event.target.value)}
+            placeholder="admin actor id"
+            aria-label="관리자 actor id"
+          />
           <button
             className="theme-toggle"
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -887,6 +1661,7 @@ export const App = () => {
               </div>
             </div>
             {renderWorkerStatusPanel()}
+            {renderAuditLogsPanel()}
           </section>
         </main>
       )}

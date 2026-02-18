@@ -14,6 +14,7 @@ GitHub 공개 이벤트를 자동 폴링하는 스캔 워커입니다.
 - `WORKER_POLL_INTERVAL_MS`: 폴링 간격
 - `WORKER_BACKFILL_*`: 백필 동작 제어
 - `WORKER_MAX_FILE_BYTES`: 파일 본문 스캔 제한
+- `KEY_FINGERPRINT_SALT`: key_hash 생성 salt (운영 필수)
 
 ## 실행
 - 개발 서버: `pnpm -w run dev:worker`

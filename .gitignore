@@ -41,6 +41,15 @@ yarn-error.log*
 Thumbs.db
 .idea/
 .vscode/
+*.swp
+*.swo
+
+# Local shell env
+.envrc
+.direnv/
+
+# Runtime artifacts
+*.pid
 
 # Local databases
 *.sqlite

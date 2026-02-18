@@ -8,6 +8,12 @@ Grafana/Alertmanager와 연동하는 최소 예시를 제공합니다.
 - SLO JSON: `GET /internal/slo`
 - Prometheus 메트릭: `GET /internal/metrics`
 
+`/internal/slo` 포함 필드:
+- `thresholds.statusAgeMsMax`
+- `thresholds.autoErrorRatioMax`
+- `values.statusAgeMs`, `values.autoErrorRatio`, `values.autoInsertRatio`, `values.manualErrorRatio`
+- `met.statusFreshness`, `met.autoErrorRatio`, `met.overall`
+
 ## 주요 메트릭
 - 보관 정책
   - `leak_worker_retention_enabled`

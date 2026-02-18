@@ -93,8 +93,7 @@ const storeLeak = async (params: {
   const addedAt = params.addedAt ? new Date(params.addedAt) : detectedAt;
   const redactedKey = redactSecret(params.secret);
 
-  // ── 핵심: provider + repo + 키 앞 16자 기반 지문 ──
-  // 같은 키가 같은 repo에서 발견되면 무조건 1건만 저장됨
+  // 원문 키 기반 salt hash 지문으로 전역 중복 제거
   const keyHash = makeKeyFingerprint(params.provider, params.secret, params.repoFullName);
 
   // 메모리 캐시 체크 – DB까지 갈 필요 없이 바로 스킵

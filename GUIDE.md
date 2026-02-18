@@ -19,7 +19,7 @@ pnpm -v
 ## 2. 인프라 켜기 (DB/Redis)
 로컬 개발은 Docker가 가장 간단합니다.
 ```bash
-docker compose -f infra/docker-compose.yml up -d
+docker compose -p leak-radar -f infra/docker-compose.yml up -d
 ```
 
 스키마 적용 (최초 1회 또는 인덱스 변경 시):
@@ -53,6 +53,18 @@ pnpm -w run dev:all
 GITHUB_TOKEN=여기에_토큰
 ```
 
+운영 권장(관리자 API 보호):
+```bash
+ADMIN_API_KEY=강한_랜덤_값
+VITE_ADMIN_API_KEY=강한_랜덤_값
+VITE_ADMIN_ACTOR_ID=security-ops
+API_CORS_ORIGINS=http://localhost:5173
+ADMIN_AUDIT_RETENTION_DAYS=180
+
+# 역할 기반으로 분리하고 싶으면 아래 형식 사용
+ADMIN_API_KEYS=ops-key:ops|read;writer-key:read|write;danger-key:danger
+```
+
 2) 워커 재시작
 ```bash
 pnpm -w run dev:worker
@@ -79,6 +91,8 @@ worker | === Leak Radar 워커 시작 ===
 - API만 켜기: `pnpm -w run dev:api`
 - Web만 켜기: `pnpm -w run dev:web`
 - Worker만 켜기: `pnpm -w run dev:worker`
+- 감사로그 정리: `pnpm -w --filter @leak/api run audit:prune`
+- 감사로그 정리(스크립트): `ADMIN_AUDIT_RETENTION_DAYS=180 ./infra/scripts/run-audit-prune.sh`
 
 ## 9. 문제 해결 (막혔을 때)
 ### 포트가 이미 사용중일 때

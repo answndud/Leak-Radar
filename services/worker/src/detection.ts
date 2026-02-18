@@ -164,6 +164,9 @@ const PROVIDER_RULES: ProviderRule[] = [
 
   // ── Vercel ──
   { provider: "vercel", regex: /vercel_[A-Za-z0-9]{24}/g, minLength: 31 },
+
+  // ── Discord Bot Token ──
+  { provider: "discord", regex: /[A-Za-z0-9_-]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27}/g, minLength: 59 },
 ];
 
 /**
@@ -316,22 +319,23 @@ export const redactSecret = (secret: string): string => {
 
 /**
  * 비밀 키의 글로벌 지문(fingerprint) 생성.
- * redacted_key(마스킹된 키)를 기준으로 해시 — 사용자에게 같아 보이면 같은 키.
+ * 원문 key를 HMAC-like salted hash로 처리해 저장 충돌을 줄입니다.
  *
  * dedup 전략:
- * - redacted_key가 같으면 = 같은 유출 → 전체 DB에서 1건만 저장
+ * - 같은 원문 key면 = 같은 유출 → 전체 DB에서 1건만 저장
  * - provider가 달라도 (openai vs anthropic), repo가 달라도 무관
- * - 화면에 같은 문자열이 2번 이상 뜨는 것 완전 차단
+ * - 원문은 저장하지 않고, salt된 해시만 비교에 사용
  */
 export const makeKeyFingerprint = (
   _provider: string,
   secret: string,
   _repoFullName?: string
 ): string => {
-  const salt = process.env.REDACTION_SALT ?? "local-dev";
-  // redacted_key 기준 해시 — 화면에 보이는 것과 동일한 기준
-  const redacted = redactSecret(secret);
+  const salt =
+    process.env.KEY_FINGERPRINT_SALT ??
+    process.env.REDACTION_SALT ??
+    "local-dev";
   return createHash("sha256")
-    .update(`${salt}:${redacted}`)
+    .update(`${salt}:${secret}`)
     .digest("hex");
 };

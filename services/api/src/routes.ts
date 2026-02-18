@@ -23,10 +23,17 @@ import {
 } from "./repositories/scan-repository";
 import { getWorkerRuntimeStatus } from "./repositories/runtime-status-repository";
 import {
+  listAdminAuditLogs,
+  recordAdminAudit,
+  type AdminAuditQuery,
+  type AdminAuditStatus
+} from "./repositories/admin-audit-repository";
+import {
   parseScanRequestBody,
   parseScheduleBody,
   parseScheduleToggleBody
 } from "./validation";
+import { authEnabled, ensureRole, type AdminRole } from "./auth";
 
 type RoutesDeps = {
   listLeaks: typeof listLeaks;
@@ -41,6 +48,8 @@ type RoutesDeps = {
   createSchedule: typeof createSchedule;
   toggleSchedule: typeof toggleSchedule;
   getWorkerRuntimeStatus: () => Promise<WorkerRuntimeStatus>;
+  listAdminAuditLogs: typeof listAdminAuditLogs;
+  recordAdminAudit: typeof recordAdminAudit;
 };
 
 const defaultDeps: RoutesDeps = {
@@ -55,7 +64,9 @@ const defaultDeps: RoutesDeps = {
   getScanJob,
   createSchedule,
   toggleSchedule,
-  getWorkerRuntimeStatus
+  getWorkerRuntimeStatus,
+  listAdminAuditLogs,
+  recordAdminAudit
 };
 
 const STATUS_AGE_SLO_MAX_MS = 300000;
@@ -115,10 +126,102 @@ const parseQuery = (query: Record<string, unknown>): LeakQuery => ({
     typeof query.pageSize === "string" ? Number.parseInt(query.pageSize, 10) : undefined
 });
 
+const parsePositiveInt = (value: unknown, fallback: number): number => {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed < 1) {
+    return fallback;
+  }
+  return parsed;
+};
+
+const parseAuditStatus = (value: unknown): AdminAuditStatus | undefined => {
+  if (value !== "allowed" && value !== "denied" && value !== "failed") {
+    return undefined;
+  }
+  return value;
+};
+
+const parseAuditQuery = (query: Record<string, unknown>): AdminAuditQuery => {
+  const role = typeof query.role === "string" && query.role.trim().length > 0
+    ? query.role.trim().toLowerCase()
+    : undefined;
+  const actorId = typeof query.actorId === "string" && query.actorId.trim().length > 0
+    ? query.actorId.trim()
+    : undefined;
+
+  return {
+    limit: parsePositiveInt(query.limit, 100),
+    sinceHours: parsePositiveInt(query.sinceHours, 0),
+    status: parseAuditStatus(query.status),
+    role,
+    actorId,
+    cursor: typeof query.cursor === "string" && query.cursor.trim().length > 0
+      ? query.cursor.trim()
+      : undefined
+  };
+};
+
 export const registerRoutes = async (app: FastifyInstance, deps?: Partial<RoutesDeps>): Promise<void> => {
   const resolvedDeps: RoutesDeps = {
     ...defaultDeps,
     ...(deps ?? {})
+  };
+
+  const writeAudit = async (params: {
+    request: { ip: string; headers: Record<string, unknown> };
+    actorId?: string | null;
+    role: AdminRole;
+    action: string;
+    status: AdminAuditStatus;
+    resource: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<void> => {
+    try {
+      const userAgent = typeof params.request.headers["user-agent"] === "string"
+        ? params.request.headers["user-agent"]
+        : null;
+      await resolvedDeps.recordAdminAudit({
+        actorId: params.actorId ?? null,
+        role: params.role,
+        action: params.action,
+        status: params.status,
+        resource: params.resource,
+        ip: params.request.ip,
+        userAgent,
+        metadata: params.metadata ?? {}
+      });
+    } catch {
+      // audit 저장 실패는 API 요청 성공/실패를 막지 않음
+    }
+  };
+
+  const authorize = async (params: {
+    request: Parameters<typeof ensureRole>[0];
+    reply: Parameters<typeof ensureRole>[1];
+    role: AdminRole;
+    action: string;
+    resource: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ actorId: string | null; role: AdminRole } | null> => {
+    const principal = ensureRole(params.request, params.reply, params.role);
+    if (!principal) {
+      if (authEnabled()) {
+        await writeAudit({
+          request: params.request,
+          role: params.role,
+          action: params.action,
+          status: "denied",
+          resource: params.resource,
+          metadata: params.metadata
+        });
+      }
+      return null;
+    }
+
+    return { actorId: principal.actorId, role: params.role };
   };
 
   app.get("/health", async () => ({ status: "ok" }));
@@ -132,12 +235,44 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
   app.get("/stats", async () => await resolvedDeps.getStats());
   app.get("/leaderboard", async () => ({ data: await resolvedDeps.listLeaderboard() }));
   app.get("/activity", async () => ({ data: await resolvedDeps.getWeeklyActivity() }));
-  app.get("/internal/worker-status", async () => ({ data: await resolvedDeps.getWorkerRuntimeStatus() }));
-  app.get("/internal/slo", async () => {
+  app.get("/internal/worker-status", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "ops",
+      action: "read-worker-status",
+      resource: "/internal/worker-status"
+    });
+    if (!granted) {
+      return;
+    }
+    return { data: await resolvedDeps.getWorkerRuntimeStatus() };
+  });
+  app.get("/internal/slo", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "ops",
+      action: "read-worker-slo",
+      resource: "/internal/slo"
+    });
+    if (!granted) {
+      return;
+    }
     const status = await resolvedDeps.getWorkerRuntimeStatus();
     return { data: buildSloStatus(status) };
   });
-  app.get("/internal/metrics", async (_request, reply) => {
+  app.get("/internal/metrics", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "ops",
+      action: "read-worker-metrics",
+      resource: "/internal/metrics"
+    });
+    if (!granted) {
+      return;
+    }
     const status = await resolvedDeps.getWorkerRuntimeStatus();
     const slo = buildSloStatus(status);
     const statusFreshnessSloMet = slo.met.statusFreshness ? 1 : 0;
@@ -244,15 +379,59 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
     return `${metrics}\n`;
   });
 
+  app.get("/internal/audit-logs", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "ops",
+      action: "read-admin-audit-logs",
+      resource: "/internal/audit-logs"
+    });
+    if (!granted) {
+      return;
+    }
+
+    const query = parseAuditQuery(request.query as Record<string, unknown>);
+    return await resolvedDeps.listAdminAuditLogs(query);
+  });
+
   app.post("/scan-requests", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "write",
+      action: "create-scan-request",
+      resource: "/scan-requests"
+    });
+    if (!granted) {
+      return;
+    }
     const parsed = parseScanRequestBody(request.body ?? {});
     if (parsed.error) {
+      await writeAudit({
+        request,
+        actorId: granted.actorId,
+        role: granted.role,
+        action: "create-scan-request",
+        status: "failed",
+        resource: "/scan-requests",
+        metadata: { reason: parsed.error }
+      });
       reply.code(400);
       return { error: parsed.error };
     }
 
     const body = parsed.data;
     if (!body) {
+      await writeAudit({
+        request,
+        actorId: granted.actorId,
+        role: granted.role,
+        action: "create-scan-request",
+        status: "failed",
+        resource: "/scan-requests",
+        metadata: { reason: "missing-body" }
+      });
       reply.code(400);
       return { error: "유효한 스캔 요청 본문이 필요합니다." };
     }
@@ -261,14 +440,61 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
       ? JSON.stringify({ providers: body.providers })
       : body.query;
     const job = await resolvedDeps.createManualScan(query);
+    await writeAudit({
+      request,
+      actorId: granted.actorId,
+      role: granted.role,
+      action: "create-scan-request",
+      status: "allowed",
+      resource: "/scan-requests",
+      metadata: {
+        jobId: job.id,
+        providerCount: body.providers?.length ?? 0,
+        hasQuery: Boolean(body.query)
+      }
+    });
     return { data: job };
   });
 
-  app.get("/scan-schedules", async () => ({ data: await resolvedDeps.listSchedules() }));
+  app.get("/scan-schedules", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "read",
+      action: "list-scan-schedules",
+      resource: "/scan-schedules"
+    });
+    if (!granted) {
+      return;
+    }
+    return { data: await resolvedDeps.listSchedules() };
+  });
 
-  app.get("/scan-jobs", async () => ({ data: await resolvedDeps.listScanJobs() }));
+  app.get("/scan-jobs", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "read",
+      action: "list-scan-jobs",
+      resource: "/scan-jobs"
+    });
+    if (!granted) {
+      return;
+    }
+    return { data: await resolvedDeps.listScanJobs() };
+  });
 
   app.get("/scan-jobs/:id", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "read",
+      action: "get-scan-job",
+      resource: "/scan-jobs/:id"
+    });
+    if (!granted) {
+      return;
+    }
     const params = request.params as { id: string };
     const job = await resolvedDeps.getScanJob(params.id);
     if (!job) {
@@ -279,14 +505,42 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
   });
 
   app.post("/scan-schedules", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "write",
+      action: "create-scan-schedule",
+      resource: "/scan-schedules"
+    });
+    if (!granted) {
+      return;
+    }
     const parsed = parseScheduleBody(request.body ?? {});
     if (parsed.error) {
+      await writeAudit({
+        request,
+        actorId: granted.actorId,
+        role: granted.role,
+        action: "create-scan-schedule",
+        status: "failed",
+        resource: "/scan-schedules",
+        metadata: { reason: parsed.error }
+      });
       reply.code(400);
       return { error: parsed.error };
     }
 
     const body = parsed.data;
     if (!body) {
+      await writeAudit({
+        request,
+        actorId: granted.actorId,
+        role: granted.role,
+        action: "create-scan-schedule",
+        status: "failed",
+        resource: "/scan-schedules",
+        metadata: { reason: "missing-body" }
+      });
       reply.code(400);
       return { error: "유효한 스케줄 본문이 필요합니다." };
     }
@@ -295,11 +549,34 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
       query: body.query,
       enabled: body.enabled
     });
+    await writeAudit({
+      request,
+      actorId: granted.actorId,
+      role: granted.role,
+      action: "create-scan-schedule",
+      status: "allowed",
+      resource: "/scan-schedules",
+      metadata: {
+        scheduleId: schedule.id,
+        intervalMinutes: schedule.intervalMinutes,
+        enabled: schedule.enabled
+      }
+    });
     return { data: schedule };
   });
 
   // AI 모델이 아닌 leak 정리 (기존 데이터 클린업용)
-  app.delete("/leaks/non-ai", async () => {
+  app.delete("/leaks/non-ai", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "danger",
+      action: "delete-non-ai-leaks",
+      resource: "/leaks/non-ai"
+    });
+    if (!granted) {
+      return;
+    }
     const { getPool } = await import("./db");
     const pool = getPool();
     const placeholders = AI_PROVIDER_IDS.map((_item: string, i: number) => `$${i + 1}`).join(", ");
@@ -308,11 +585,30 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
       AI_PROVIDER_IDS
     );
     const deleted = result.rowCount ?? 0;
+    await writeAudit({
+      request,
+      actorId: granted.actorId,
+      role: granted.role,
+      action: "delete-non-ai-leaks",
+      status: "allowed",
+      resource: "/leaks/non-ai",
+      metadata: { deleted }
+    });
     return { deleted, message: `AI 모델이 아닌 leak ${deleted}건 삭제 완료` };
   });
 
   // 피드 초기화 – 모든 leaks 삭제 및 관련 집계 리셋
-  app.delete("/leaks", async () => {
+  app.delete("/leaks", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "danger",
+      action: "reset-leak-feed",
+      resource: "/leaks"
+    });
+    if (!granted) {
+      return;
+    }
     const { getPool } = await import("./db");
     const pool = getPool();
     const leaksResult = await pool.query("DELETE FROM leaks");
@@ -320,39 +616,103 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
     // 집계 테이블도 리셋
     await pool.query("DELETE FROM activity_daily").catch(() => {});
     await pool.query("DELETE FROM leaderboard_devs").catch(() => {});
+    await writeAudit({
+      request,
+      actorId: granted.actorId,
+      role: granted.role,
+      action: "reset-leak-feed",
+      status: "allowed",
+      resource: "/leaks",
+      metadata: { deleted }
+    });
     return { deleted, message: `전체 피드 초기화 완료 (${deleted}건 삭제)` };
   });
 
-  // 중복 leak 정리 – 같은 provider + redacted_key 기준 전체에서 최신 1건만 남김
-  // repo가 달라도 같은 키면 중복 → 테스트 키 복붙 스팸 제거
-  app.delete("/leaks/duplicates", async () => {
+  // 중복 leak 정리 – key_hash 기준 전체에서 최신 1건만 남김
+  app.delete("/leaks/duplicates", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "danger",
+      action: "dedupe-leaks",
+      resource: "/leaks/duplicates"
+    });
+    if (!granted) {
+      return;
+    }
     const { getPool } = await import("./db");
     const pool = getPool();
     const result = await pool.query(`
       DELETE FROM leaks
       WHERE id NOT IN (
-        SELECT DISTINCT ON (provider, redacted_key)
+        SELECT DISTINCT ON (key_hash)
                id
         FROM leaks
-        ORDER BY provider, redacted_key, detected_at DESC
+        ORDER BY key_hash, detected_at DESC
       )
     `);
     const deleted = result.rowCount ?? 0;
+    await writeAudit({
+      request,
+      actorId: granted.actorId,
+      role: granted.role,
+      action: "dedupe-leaks",
+      status: "allowed",
+      resource: "/leaks/duplicates",
+      metadata: { deleted }
+    });
     return { deleted, message: `중복 leak ${deleted}건 제거 완료` };
   });
 
   app.post("/scan-schedules/:id/toggle", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "write",
+      action: "toggle-scan-schedule",
+      resource: "/scan-schedules/:id/toggle"
+    });
+    if (!granted) {
+      return;
+    }
     const params = request.params as { id: string };
     const parsed = parseScheduleToggleBody(request.body ?? {});
     if (parsed.error) {
+      await writeAudit({
+        request,
+        actorId: granted.actorId,
+        role: granted.role,
+        action: "toggle-scan-schedule",
+        status: "failed",
+        resource: "/scan-schedules/:id/toggle",
+        metadata: { reason: parsed.error, scheduleId: params.id }
+      });
       reply.code(400);
       return { error: parsed.error };
     }
     const enabled = parsed.enabled ?? false;
     const schedule = await resolvedDeps.toggleSchedule({ id: params.id, enabled });
     if (!schedule) {
+      await writeAudit({
+        request,
+        actorId: granted.actorId,
+        role: granted.role,
+        action: "toggle-scan-schedule",
+        status: "failed",
+        resource: "/scan-schedules/:id/toggle",
+        metadata: { reason: "not-found", scheduleId: params.id, enabled }
+      });
       return { error: "Schedule not found" };
     }
+    await writeAudit({
+      request,
+      actorId: granted.actorId,
+      role: granted.role,
+      action: "toggle-scan-schedule",
+      status: "allowed",
+      resource: "/scan-schedules/:id/toggle",
+      metadata: { scheduleId: schedule.id, enabled: schedule.enabled }
+    });
     return { data: schedule };
   });
 };

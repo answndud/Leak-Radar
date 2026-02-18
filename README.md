@@ -14,7 +14,7 @@ Explore/Leaderboard 형태로 실시간 피드를 제공합니다.
 
 ### 1) 인프라 실행
 ```bash
-docker compose -f infra/docker-compose.yml up -d
+docker compose -p leak-radar -f infra/docker-compose.yml up -d
 ```
 
 ### 2) 스키마 적용
@@ -40,6 +40,19 @@ WORKER_RETENTION_DAYS=30
 WORKER_RETENTION_INTERVAL_MS=3600000
 ```
 
+권장(운영): 관리자 엔드포인트 보호
+```bash
+ADMIN_API_KEY=강한_랜덤_값
+VITE_ADMIN_API_KEY=강한_랜덤_값
+VITE_ADMIN_ACTOR_ID=security-ops
+API_CORS_ORIGINS=https://your-console.example.com
+KEY_FINGERPRINT_SALT=강한_랜덤_값
+ADMIN_AUDIT_RETENTION_DAYS=180
+
+# 역할 기반 키(선택): key:read|write|danger|ops;...
+ADMIN_API_KEYS=ops-key:ops|read;writer-key:read|write;danger-key:danger
+```
+
 ### 5) 전체 실행
 ```bash
 pnpm -w run dev:all
@@ -53,9 +66,37 @@ pnpm -w run dev:all
 - `GET /activity`
 - `GET /internal/worker-status`
 - `GET /internal/slo`
+  - thresholds/values/met 구조의 SLO 상태 JSON 반환
 - `GET /internal/metrics` (Prometheus 텍스트)
+- `GET /internal/audit-logs` (관리자 액션 감사로그)
 - `POST /scan-requests` (providers 또는 query)
   - providers는 서버에서 지원 목록 검증 후 처리
+
+`ADMIN_API_KEY`가 설정된 경우 아래 엔드포인트는
+`x-leak-radar-admin-key` 헤더가 필요합니다.
+- `/internal/*`
+- `POST /scan-requests`
+- `GET /scan-jobs*`, `GET /scan-schedules`
+- `POST /scan-schedules*`
+- `DELETE /leaks*`
+
+역할 기반 인증(`ADMIN_API_KEYS`)을 사용하면 권한이 분리됩니다.
+- `read`: scan job/schedule 조회
+- `write`: scan 요청/스케줄 생성, 토글
+- `danger`: leak 삭제/초기화/중복정리
+- `ops`: 내부 상태/메트릭/감사로그 조회
+
+감사로그 actor 추적을 위해 웹에서 `x-leak-radar-admin-id` 헤더를 전송합니다.
+- 설정 우선순위: UI 입력값(localStorage) > `VITE_ADMIN_ACTOR_ID`
+- 웹 감사로그 패널은 필터/검색/정렬 상태를 URL 쿼리로 동기화합니다.
+- 웹 감사로그 패널은 프리셋 버튼과 필터 링크 복사 기능을 제공합니다.
+- 웹 감사로그 패널은 커스텀 프리셋을 로컬에 저장해 재사용할 수 있습니다.
+
+감사로그 운영:
+- 필터 조회: `/internal/audit-logs?limit=25&status=failed&role=ops&actorId=security-ops&sinceHours=24&cursor=...`
+  - 응답: `{ data, nextCursor }`
+- 보관 정리 배치: `pnpm -w --filter @leak/api run audit:prune`
+- 크론용 래퍼: `ADMIN_AUDIT_RETENTION_DAYS=180 ./infra/scripts/run-audit-prune.sh`
 
 정리용:
 - `DELETE /leaks`

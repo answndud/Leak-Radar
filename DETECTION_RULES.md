@@ -14,8 +14,9 @@
 - 리포트 파일: `DETECTION_FIXTURES_REPORT.md`
 
 현재 fixture 범주:
-- 정탐: openai, anthropic, google, slack, github
-- 오탐 방지: placeholder, templating reference, low entropy
+- 정탐: openai, anthropic, google, grok, kimi, deepseek, mistral
+- 정탐: stripe, aws, slack, sendgrid, github, npm, supabase, vercel, discord
+- 오탐 방지: placeholder, templating reference, env reference, low entropy, comment noise
 
 ## 변경 절차
 1. 탐지 규칙 변경 (`services/worker/src/detection.ts`)

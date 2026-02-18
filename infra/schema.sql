@@ -69,3 +69,19 @@ CREATE TABLE IF NOT EXISTS worker_runtime_status (
   value JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS admin_audit_logs (
+  id UUID PRIMARY KEY,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  actor_id TEXT,
+  role TEXT NOT NULL,
+  action TEXT NOT NULL,
+  status TEXT NOT NULL,
+  resource TEXT NOT NULL,
+  ip TEXT,
+  user_agent TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS admin_audit_logs_occurred_at
+  ON admin_audit_logs (occurred_at DESC);

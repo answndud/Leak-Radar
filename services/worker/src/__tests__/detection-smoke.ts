@@ -37,10 +37,11 @@ assertProvidersFiltered(
   ["openai"]
 );
 
-// redacted_key 기반 지문 일관성
+// 원문 기반 지문 일관성
 const secretA = ["sk", "-proj-", "ABCD", "xxxxxxxxxxxxxxxxxxx", "999"].join("");
 const secretB = ["sk", "-proj-", "ABCD", "yyyyyyyyyyyyyyyyyyy", "999"].join("");
 assert.equal(redactSecret(secretA), redactSecret(secretB));
-assert.equal(makeKeyFingerprint("openai", secretA), makeKeyFingerprint("openai", secretB));
+assert.notEqual(makeKeyFingerprint("openai", secretA), makeKeyFingerprint("openai", secretB));
+assert.equal(makeKeyFingerprint("openai", secretA), makeKeyFingerprint("openai", secretA));
 
 console.log("[detection-smoke] ok");

@@ -5,6 +5,7 @@ import { registerRoutes } from "../routes";
 
 const createMockServer = async () => {
   const app = Fastify();
+  let capturedAuditQuery: unknown = null;
 
   await registerRoutes(app, {
     listLeaks: async () => ({ data: [], page: 1, pageSize: 24, total: 0 }),
@@ -34,6 +35,13 @@ const createMockServer = async () => {
       updatedAt: new Date().toISOString()
     }),
     toggleSchedule: async () => null,
+    listAdminAuditLogs: async (query) => {
+      capturedAuditQuery = query;
+      return { data: [], nextCursor: null };
+    },
+    recordAdminAudit: async () => {
+      // noop
+    },
     getWorkerRuntimeStatus: async () => ({
       retention: {
         enabled: true,
@@ -75,15 +83,24 @@ const createMockServer = async () => {
     })
   });
 
-  return app;
+  return { app, getCapturedAuditQuery: () => capturedAuditQuery };
 };
 
 const run = async (): Promise<void> => {
-  const app = await createMockServer();
+  const { app, getCapturedAuditQuery } = await createMockServer();
+
+  process.env.ADMIN_API_KEY = "test-admin-key";
+
+  const unauthorizedStatus = await app.inject({
+    method: "GET",
+    url: "/internal/worker-status"
+  });
+  assert.equal(unauthorizedStatus.statusCode, 401);
 
   const badScan = await app.inject({
     method: "POST",
     url: "/scan-requests",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" },
     payload: { query: "sk-proj-", providers: ["openai"] }
   });
   assert.equal(badScan.statusCode, 400);
@@ -91,6 +108,7 @@ const run = async (): Promise<void> => {
   const goodScan = await app.inject({
     method: "POST",
     url: "/scan-requests",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" },
     payload: { providers: ["openai", "mistral"] }
   });
   assert.equal(goodScan.statusCode, 200);
@@ -98,6 +116,7 @@ const run = async (): Promise<void> => {
   const badSchedule = await app.inject({
     method: "POST",
     url: "/scan-schedules",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" },
     payload: { intervalMinutes: 10 }
   });
   assert.equal(badSchedule.statusCode, 400);
@@ -105,32 +124,45 @@ const run = async (): Promise<void> => {
   const badToggle = await app.inject({
     method: "POST",
     url: "/scan-schedules/a/toggle",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" },
     payload: { enabled: "yes" }
   });
   assert.equal(badToggle.statusCode, 400);
 
   const missingJob = await app.inject({
     method: "GET",
-    url: "/scan-jobs/not-found"
+    url: "/scan-jobs/not-found",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" }
   });
   assert.equal(missingJob.statusCode, 404);
 
   const runtimeStatus = await app.inject({
     method: "GET",
-    url: "/internal/worker-status"
+    url: "/internal/worker-status",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" }
   });
   assert.equal(runtimeStatus.statusCode, 200);
 
   const sloStatus = await app.inject({
     method: "GET",
-    url: "/internal/slo"
+    url: "/internal/slo",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" }
   });
   assert.equal(sloStatus.statusCode, 200);
-  assert.equal(sloStatus.body.includes("overall"), true);
+  const sloPayload = JSON.parse(sloStatus.body) as {
+    data: {
+      thresholds: { statusAgeMsMax: number; autoErrorRatioMax: number };
+      met: { overall: boolean };
+    };
+  };
+  assert.equal(sloPayload.data.thresholds.statusAgeMsMax, 300000);
+  assert.equal(sloPayload.data.thresholds.autoErrorRatioMax, 0.3);
+  assert.equal(typeof sloPayload.data.met.overall, "boolean");
 
   const metrics = await app.inject({
     method: "GET",
-    url: "/internal/metrics"
+    url: "/internal/metrics",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" }
   });
   assert.equal(metrics.statusCode, 200);
   const contentType = String(metrics.headers["content-type"] ?? "");
@@ -142,6 +174,44 @@ const run = async (): Promise<void> => {
   assert.equal(metrics.body.includes("leak_worker_status_age_ms"), true);
   assert.equal(metrics.body.includes("leak_worker_slo_overall_met"), true);
   assert.equal(metrics.body.includes("leak_worker_detection_ruleset_info"), true);
+
+  const auditLogs = await app.inject({
+    method: "GET",
+    url: "/internal/audit-logs?limit=10&status=failed&role=ops&actorId=security-ops&sinceHours=24&cursor=abc",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" }
+  });
+  assert.equal(auditLogs.statusCode, 200);
+  const auditPayload = JSON.parse(auditLogs.body) as { data: unknown[]; nextCursor: string | null };
+  assert.equal(Array.isArray(auditPayload.data), true);
+  assert.equal(auditPayload.nextCursor, null);
+  assert.deepEqual(getCapturedAuditQuery(), {
+    limit: 10,
+    sinceHours: 24,
+    status: "failed",
+    role: "ops",
+    actorId: "security-ops",
+    cursor: "abc"
+  });
+
+  delete process.env.ADMIN_API_KEY;
+
+  process.env.ADMIN_API_KEYS = "ops-key:read|ops;writer-key:read|write";
+
+  const roleForbidden = await app.inject({
+    method: "DELETE",
+    url: "/leaks/duplicates",
+    headers: { "x-leak-radar-admin-key": "writer-key" }
+  });
+  assert.equal(roleForbidden.statusCode, 403);
+
+  const roleAllowed = await app.inject({
+    method: "GET",
+    url: "/internal/worker-status",
+    headers: { "x-leak-radar-admin-key": "ops-key" }
+  });
+  assert.equal(roleAllowed.statusCode, 200);
+
+  delete process.env.ADMIN_API_KEYS;
 
   await app.close();
   console.log("[api-routes-smoke] ok");
