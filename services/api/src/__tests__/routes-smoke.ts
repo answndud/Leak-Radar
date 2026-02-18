@@ -45,6 +45,9 @@ const createMockServer = async () => {
       {
         id: "view-1",
         name: "failed 24h",
+        category: "incident",
+        description: "최근 실패",
+        isPinned: true,
         filters: { status: "failed", sinceHours: 24 },
         createdBy: ownerId,
         createdAt: new Date().toISOString(),
@@ -56,6 +59,9 @@ const createMockServer = async () => {
         return {
           id,
           name: "ops failures",
+          category: "incident",
+          description: "운영 실패",
+          isPinned: true,
           filters: { status: "failed", role: "ops", sinceHours: 24 },
           createdBy: ownerId,
           createdAt: new Date().toISOString(),
@@ -66,6 +72,9 @@ const createMockServer = async () => {
         return {
           id,
           name: "orphan",
+          category: "general",
+          description: null,
+          isPinned: false,
           filters: {},
           createdBy: null,
           createdAt: new Date().toISOString(),
@@ -74,11 +83,14 @@ const createMockServer = async () => {
       }
       return null;
     },
-    createAdminAuditView: async ({ name, filters, createdBy }) => {
+    createAdminAuditView: async ({ name, category, description, isPinned, filters, createdBy }) => {
       createdAuditViewName = name;
       return {
         id: "view-2",
         name,
+        category,
+        description: description ?? null,
+        isPinned: isPinned === true,
         filters,
         createdBy: createdBy ?? null,
         createdAt: new Date().toISOString(),
@@ -86,13 +98,16 @@ const createMockServer = async () => {
       };
     },
     deleteAdminAuditView: async (id) => id === "view-2" || id === "view-orphan",
-    updateAdminAuditView: async ({ id, name, filters }) => {
+    updateAdminAuditView: async ({ id, name, category, description, isPinned, filters }) => {
       if (id !== "view-2") {
         return null;
       }
       return {
         id,
         name,
+        category,
+        description: description ?? null,
+        isPinned: isPinned === true,
         filters,
         createdBy: "security-ops",
         createdAt: new Date().toISOString(),
@@ -278,6 +293,9 @@ const run = async (): Promise<void> => {
     headers: { "x-leak-radar-admin-key": "test-admin-key", "x-leak-radar-admin-id": "security-ops" },
     payload: {
       name: "ops failures",
+      category: "incident",
+      description: "최근 실패 점검",
+      isPinned: true,
       status: "failed",
       role: "ops",
       sinceHours: 24,
@@ -314,7 +332,15 @@ const run = async (): Promise<void> => {
     method: "PATCH",
     url: "/internal/audit-views/view-2",
     headers: { "x-leak-radar-admin-key": "test-admin-key", "x-leak-radar-admin-id": "security-ops" },
-    payload: { name: "updated ops failures", status: "failed", role: "ops", sinceHours: 6 }
+    payload: {
+      name: "updated ops failures",
+      category: "review",
+      description: "운영 점검",
+      isPinned: false,
+      status: "failed",
+      role: "ops",
+      sinceHours: 6
+    }
   });
   assert.equal(updateAuditView.statusCode, 200);
 

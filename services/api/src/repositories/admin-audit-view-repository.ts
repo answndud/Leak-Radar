@@ -13,6 +13,9 @@ export type AdminAuditViewFilters = {
 export type AdminAuditView = {
   id: string;
   name: string;
+  category: string;
+  description: string | null;
+  isPinned: boolean;
   filters: AdminAuditViewFilters;
   createdBy: string | null;
   createdAt: string;
@@ -22,6 +25,9 @@ export type AdminAuditView = {
 type AdminAuditViewRow = {
   id: string;
   name: string;
+  category: string;
+  description: string | null;
+  is_pinned: boolean;
   filters: unknown;
   created_by: string | null;
   created_at: string;
@@ -38,6 +44,9 @@ const toFilters = (value: unknown): AdminAuditViewFilters => {
 const toView = (row: AdminAuditViewRow): AdminAuditView => ({
   id: row.id,
   name: row.name,
+  category: row.category,
+  description: row.description,
+  isPinned: row.is_pinned,
   filters: toFilters(row.filters),
   createdBy: row.created_by,
   createdAt: row.created_at,
@@ -47,27 +56,37 @@ const toView = (row: AdminAuditViewRow): AdminAuditView => ({
 export const listAdminAuditViews = async (): Promise<AdminAuditView[]> => {
   const pool = getPool();
   const result = await pool.query<AdminAuditViewRow>(
-    `SELECT id, name, filters, created_by, created_at::text, updated_at::text
+    `SELECT id, name, category, description, is_pinned, filters, created_by, created_at::text, updated_at::text
      FROM admin_audit_views
-     ORDER BY updated_at DESC`
+     ORDER BY is_pinned DESC, updated_at DESC`
   );
   return result.rows.map(toView);
 };
 
 export const createAdminAuditView = async (params: {
   name: string;
+  category: string;
+  description?: string | null;
+  isPinned?: boolean;
   filters: AdminAuditViewFilters;
   createdBy?: string | null;
 }): Promise<AdminAuditView> => {
   const pool = getPool();
   const result = await pool.query<AdminAuditViewRow>(
     `INSERT INTO admin_audit_views (
-      id, name, filters, created_by
+      id, name, category, description, is_pinned, filters, created_by
     ) VALUES (
-      gen_random_uuid(), $1, $2::jsonb, $3
+      gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6
     )
-    RETURNING id, name, filters, created_by, created_at::text, updated_at::text`,
-    [params.name, JSON.stringify(params.filters), params.createdBy ?? null]
+    RETURNING id, name, category, description, is_pinned, filters, created_by, created_at::text, updated_at::text`,
+    [
+      params.name,
+      params.category,
+      params.description ?? null,
+      params.isPinned === true,
+      JSON.stringify(params.filters),
+      params.createdBy ?? null
+    ]
   );
 
   return toView(result.rows[0]);
@@ -76,7 +95,7 @@ export const createAdminAuditView = async (params: {
 export const getAdminAuditViewById = async (id: string): Promise<AdminAuditView | null> => {
   const pool = getPool();
   const result = await pool.query<AdminAuditViewRow>(
-    `SELECT id, name, filters, created_by, created_at::text, updated_at::text
+    `SELECT id, name, category, description, is_pinned, filters, created_by, created_at::text, updated_at::text
      FROM admin_audit_views
      WHERE id = $1`,
     [id]
@@ -97,17 +116,30 @@ export const deleteAdminAuditView = async (id: string): Promise<boolean> => {
 export const updateAdminAuditView = async (params: {
   id: string;
   name: string;
+  category: string;
+  description?: string | null;
+  isPinned?: boolean;
   filters: AdminAuditViewFilters;
 }): Promise<AdminAuditView | null> => {
   const pool = getPool();
   const result = await pool.query<AdminAuditViewRow>(
     `UPDATE admin_audit_views
      SET name = $2,
-         filters = $3::jsonb,
+         category = $3,
+         description = $4,
+         is_pinned = $5,
+         filters = $6::jsonb,
          updated_at = now()
      WHERE id = $1
-     RETURNING id, name, filters, created_by, created_at::text, updated_at::text`,
-    [params.id, params.name, JSON.stringify(params.filters)]
+     RETURNING id, name, category, description, is_pinned, filters, created_by, created_at::text, updated_at::text`,
+    [
+      params.id,
+      params.name,
+      params.category,
+      params.description ?? null,
+      params.isPinned === true,
+      JSON.stringify(params.filters)
+    ]
   );
 
   if (result.rows.length === 0) {

@@ -184,7 +184,15 @@ const parseAuditQuery = (query: Record<string, unknown>): AdminAuditQuery => {
 };
 
 const parseAuditViewBody = (body: unknown):
-  { data: { name: string; filters: AdminAuditViewFilters } }
+  {
+    data: {
+      name: string;
+      category: string;
+      description?: string;
+      isPinned: boolean;
+      filters: AdminAuditViewFilters;
+    }
+  }
   | { error: string } => {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { error: "요청 본문이 필요합니다." };
@@ -195,6 +203,14 @@ const parseAuditViewBody = (body: unknown):
   if (name.length < 2 || name.length > 64) {
     return { error: "name은 2~64자여야 합니다." };
   }
+
+  const category = typeof record.category === "string" && record.category.trim().length > 0
+    ? record.category.trim().slice(0, 24).toLowerCase()
+    : "general";
+  const description = typeof record.description === "string" && record.description.trim().length > 0
+    ? record.description.trim().slice(0, 180)
+    : undefined;
+  const isPinned = record.isPinned === true;
 
   const status = parseAuditStatus(record.status);
   const role =
@@ -227,6 +243,9 @@ const parseAuditViewBody = (body: unknown):
   return {
     data: {
       name,
+      category,
+      description,
+      isPinned,
       filters: {
         status,
         role,
@@ -540,6 +559,9 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
 
     const created = await resolvedDeps.createAdminAuditView({
       name: parsed.data.name,
+      category: parsed.data.category,
+      description: parsed.data.description,
+      isPinned: parsed.data.isPinned,
       filters: parsed.data.filters,
       createdBy: granted.actorId
     });
@@ -668,6 +690,9 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
     const updated = await resolvedDeps.updateAdminAuditView({
       id,
       name: parsed.data.name,
+      category: parsed.data.category,
+      description: parsed.data.description,
+      isPinned: parsed.data.isPinned,
       filters: parsed.data.filters
     });
     if (!updated) {

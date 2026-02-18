@@ -55,11 +55,17 @@ type AuditPreset = {
   custom?: boolean;
   shared?: boolean;
   sharedId?: string;
+  category?: string;
+  description?: string;
+  isPinned?: boolean;
 };
 
 type SharedAuditView = {
   id: string;
   name: string;
+  category: string;
+  description: string | null;
+  isPinned: boolean;
   filters: {
     status?: "allowed" | "denied" | "failed";
     role?: "ops" | "read" | "write" | "danger";
@@ -276,7 +282,10 @@ const toSharedViewPreset = (view: SharedAuditView): AuditPreset => ({
   actorFilter: typeof view.filters.actorId === "string" ? view.filters.actorId : "",
   searchQuery: typeof view.filters.searchQuery === "string" ? view.filters.searchQuery : "",
   shared: true,
-  sharedId: view.id
+  sharedId: view.id,
+  category: view.category,
+  description: view.description ?? undefined,
+  isPinned: view.isPinned
 });
 
 const readAdminActorId = (): string | undefined => {
@@ -485,6 +494,9 @@ export const App = () => {
   const [customAuditPresets, setCustomAuditPresets] = useState<AuditPreset[]>([]);
   const [newPresetLabel, setNewPresetLabel] = useState("");
   const [newSharedPresetLabel, setNewSharedPresetLabel] = useState("");
+  const [newSharedPresetCategory, setNewSharedPresetCategory] = useState("general");
+  const [newSharedPresetDescription, setNewSharedPresetDescription] = useState("");
+  const [newSharedPresetPinned, setNewSharedPresetPinned] = useState(false);
   const [sharedPresetBusy, setSharedPresetBusy] = useState(false);
   const [sharedPresetError, setSharedPresetError] = useState("");
   const presetImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -1288,6 +1300,9 @@ export const App = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name,
+          category: newSharedPresetCategory.trim() || "general",
+          description: newSharedPresetDescription.trim() || undefined,
+          isPinned: newSharedPresetPinned,
           status: auditStatusFilter === "all" ? undefined : auditStatusFilter,
           role: auditRoleFilter === "all" ? undefined : auditRoleFilter,
           actorId: auditActorFilter.trim() || undefined,
@@ -1304,6 +1319,8 @@ export const App = () => {
       }
 
       setNewSharedPresetLabel("");
+      setNewSharedPresetDescription("");
+      setNewSharedPresetPinned(false);
       await loadSharedAuditViews();
     } catch {
       setSharedPresetError("공유 프리셋 저장에 실패했습니다.");
@@ -1342,11 +1359,15 @@ export const App = () => {
     setSharedPresetBusy(true);
     setSharedPresetError("");
     try {
+      const source = sharedViewById.get(preset.sharedId);
       const response = await apiFetch(`/internal/audit-views/${preset.sharedId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: nextName,
+          category: source?.category ?? preset.category ?? "general",
+          description: source?.description ?? preset.description,
+          isPinned: source?.isPinned ?? preset.isPinned === true,
           status: preset.status === "all" ? undefined : preset.status,
           role: preset.role === "all" ? undefined : preset.role,
           actorId: preset.actorFilter || undefined,
@@ -1381,6 +1402,13 @@ export const App = () => {
     const map = new Map<string, string>();
     for (const item of sharedAuditViews) {
       map.set(item.id, item.createdBy ?? "(미지정)");
+    }
+    return map;
+  }, [sharedAuditViews]);
+  const sharedViewById = useMemo(() => {
+    const map = new Map<string, SharedAuditView>();
+    for (const item of sharedAuditViews) {
+      map.set(item.id, item);
     }
     return map;
   }, [sharedAuditViews]);
@@ -1528,7 +1556,11 @@ export const App = () => {
                 onClick={() => applyAuditPreset(preset)}
                 title={preset.shared && preset.sharedId ? `owner: ${sharedOwnerById.get(preset.sharedId) ?? "(미지정)"}` : undefined}
               >
-                {preset.shared ? `☁ ${preset.label}` : preset.custom ? `★ ${preset.label}` : preset.label}
+                {preset.shared
+                  ? `${preset.isPinned ? "📌" : "☁"} ${preset.category ? `[${preset.category}] ` : ""}${preset.label}`
+                  : preset.custom
+                    ? `★ ${preset.label}`
+                    : preset.label}
               </button>
               {preset.custom && (
                 <button
@@ -1582,6 +1614,28 @@ export const App = () => {
             onChange={(event) => setNewSharedPresetLabel(event.target.value)}
             placeholder="공유 프리셋 이름"
           />
+          <input
+            className="control-field"
+            style={{ padding: "6px 8px", minWidth: "88px", fontSize: "12px" }}
+            value={newSharedPresetCategory}
+            onChange={(event) => setNewSharedPresetCategory(event.target.value)}
+            placeholder="category"
+          />
+          <input
+            className="control-field"
+            style={{ padding: "6px 8px", minWidth: "160px", fontSize: "12px" }}
+            value={newSharedPresetDescription}
+            onChange={(event) => setNewSharedPresetDescription(event.target.value)}
+            placeholder="설명(선택)"
+          />
+          <label className="status-note" style={{ margin: 0, display: "inline-flex", gap: "4px", alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={newSharedPresetPinned}
+              onChange={(event) => setNewSharedPresetPinned(event.target.checked)}
+            />
+            pin
+          </label>
           <button
             className="action-btn small"
             onClick={() => void saveCurrentSharedAuditPreset()}

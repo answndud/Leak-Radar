@@ -89,11 +89,18 @@ CREATE INDEX IF NOT EXISTS admin_audit_logs_occurred_at
 CREATE TABLE IF NOT EXISTS admin_audit_views (
   id UUID PRIMARY KEY,
   name TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'general',
+  description TEXT,
+  is_pinned BOOLEAN NOT NULL DEFAULT false,
   filters JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_by TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE admin_audit_views ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'general';
+ALTER TABLE admin_audit_views ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE admin_audit_views ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS admin_audit_views_updated_at
   ON admin_audit_views (updated_at DESC);

@@ -35,6 +35,7 @@ Explore/Leaderboard 데이터를 제공하는 API 서버입니다.
   - `PATCH /internal/audit-views/:id`
   - `DELETE /internal/audit-views/:id`
   - 수정/삭제 권한: 생성자 우선, `danger` 권한 키는 override 가능
+  - 메타데이터: `category`, `description`, `isPinned`
 - 정리 배치: `pnpm -w --filter @leak/api run audit:prune`
   - `ADMIN_AUDIT_RETENTION_DAYS` 값(예: 180) 기준으로 만료 로그 삭제
 
