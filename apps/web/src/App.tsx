@@ -72,6 +72,7 @@ type SharedAuditView = {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+  canManage?: boolean;
 };
 
 type LeakResponse = {
@@ -1369,6 +1370,20 @@ export const App = () => {
   };
 
   const sharedAuditPresets = sharedAuditViews.map(toSharedViewPreset);
+  const sharedManageById = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const item of sharedAuditViews) {
+      map.set(item.id, item.canManage === true);
+    }
+    return map;
+  }, [sharedAuditViews]);
+  const sharedOwnerById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of sharedAuditViews) {
+      map.set(item.id, item.createdBy ?? "(미지정)");
+    }
+    return map;
+  }, [sharedAuditViews]);
   const allAuditPresets = [...sharedAuditPresets, ...AUDIT_PRESETS, ...customAuditPresets];
 
   const exportCustomAuditPresets = (): void => {
@@ -1511,6 +1526,7 @@ export const App = () => {
               <button
                 className="quick-btn audit-preset-btn"
                 onClick={() => applyAuditPreset(preset)}
+                title={preset.shared && preset.sharedId ? `owner: ${sharedOwnerById.get(preset.sharedId) ?? "(미지정)"}` : undefined}
               >
                 {preset.shared ? `☁ ${preset.label}` : preset.custom ? `★ ${preset.label}` : preset.label}
               </button>
@@ -1528,7 +1544,7 @@ export const App = () => {
                   className="quick-btn audit-preset-remove"
                   onClick={() => void renameSharedAuditPreset(preset)}
                   title={`${preset.label} 이름 변경`}
-                  disabled={sharedPresetBusy}
+                  disabled={sharedPresetBusy || !sharedManageById.get(preset.sharedId)}
                 >
                   e
                 </button>
@@ -1538,7 +1554,7 @@ export const App = () => {
                   className="quick-btn audit-preset-remove"
                   onClick={() => void removeSharedAuditPreset(preset.sharedId ?? "")}
                   title={`${preset.label} 공유 프리셋 삭제`}
-                  disabled={sharedPresetBusy}
+                  disabled={sharedPresetBusy || !sharedManageById.get(preset.sharedId)}
                 >
                   x
                 </button>

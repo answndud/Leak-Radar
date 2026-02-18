@@ -31,8 +31,10 @@ import {
 import {
   createAdminAuditView,
   deleteAdminAuditView,
+  getAdminAuditViewById,
   listAdminAuditViews,
   updateAdminAuditView,
+  type AdminAuditView,
   type AdminAuditViewFilters
 } from "./repositories/admin-audit-view-repository";
 import {
@@ -58,6 +60,7 @@ type RoutesDeps = {
   listAdminAuditLogs: typeof listAdminAuditLogs;
   recordAdminAudit: typeof recordAdminAudit;
   listAdminAuditViews: typeof listAdminAuditViews;
+  getAdminAuditViewById: typeof getAdminAuditViewById;
   createAdminAuditView: typeof createAdminAuditView;
   deleteAdminAuditView: typeof deleteAdminAuditView;
   updateAdminAuditView: typeof updateAdminAuditView;
@@ -79,6 +82,7 @@ const defaultDeps: RoutesDeps = {
   listAdminAuditLogs,
   recordAdminAudit,
   listAdminAuditViews,
+  getAdminAuditViewById,
   createAdminAuditView,
   deleteAdminAuditView,
   updateAdminAuditView
@@ -277,7 +281,7 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
     action: string;
     resource: string;
     metadata?: Record<string, unknown>;
-  }): Promise<{ actorId: string | null; role: AdminRole } | null> => {
+  }): Promise<{ actorId: string | null; role: AdminRole; canOverrideOwnership: boolean } | null> => {
     const principal = ensureRole(params.request, params.reply, params.role);
     if (!principal) {
       if (authEnabled()) {
@@ -293,7 +297,26 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
       return null;
     }
 
-    return { actorId: principal.actorId, role: params.role };
+    return {
+      actorId: principal.actorId,
+      role: params.role,
+      canOverrideOwnership: principal.roles.has("danger")
+    };
+  };
+
+  const canManageAuditView = (
+    view: AdminAuditView,
+    principal: { actorId: string | null; canOverrideOwnership: boolean }
+  ): boolean => {
+    if (principal.canOverrideOwnership) {
+      return true;
+    }
+
+    if (!view.createdBy || !principal.actorId) {
+      return false;
+    }
+
+    return view.createdBy === principal.actorId;
   };
 
   app.get("/health", async () => ({ status: "ok" }));
@@ -479,7 +502,13 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
       return;
     }
 
-    return { data: await resolvedDeps.listAdminAuditViews() };
+    const views = await resolvedDeps.listAdminAuditViews();
+    return {
+      data: views.map((view) => ({
+        ...view,
+        canManage: canManageAuditView(view, granted)
+      }))
+    };
   });
 
   app.post("/internal/audit-views", async (request, reply) => {
@@ -525,7 +554,12 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
       metadata: { auditViewId: created.id, name: created.name }
     });
 
-    return { data: created };
+    return {
+      data: {
+        ...created,
+        canManage: canManageAuditView(created, granted)
+      }
+    };
   });
 
   app.delete("/internal/audit-views/:id", async (request, reply) => {
@@ -545,6 +579,26 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
     if (!id) {
       reply.code(400);
       return { error: "id가 필요합니다." };
+    }
+
+    const existing = await resolvedDeps.getAdminAuditViewById(id);
+    if (!existing) {
+      reply.code(404);
+      return { error: "Audit view not found" };
+    }
+
+    if (!canManageAuditView(existing, granted)) {
+      await writeAudit({
+        request,
+        actorId: granted.actorId,
+        role: granted.role,
+        action: "delete-admin-audit-view",
+        status: "denied",
+        resource: "/internal/audit-views/:id",
+        metadata: { auditViewId: id, owner: existing.createdBy }
+      });
+      reply.code(403);
+      return { error: "공유 프리셋 소유자만 삭제할 수 있습니다." };
     }
 
     const deleted = await resolvedDeps.deleteAdminAuditView(id);
@@ -585,6 +639,26 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
       return { error: "id가 필요합니다." };
     }
 
+    const existing = await resolvedDeps.getAdminAuditViewById(id);
+    if (!existing) {
+      reply.code(404);
+      return { error: "Audit view not found" };
+    }
+
+    if (!canManageAuditView(existing, granted)) {
+      await writeAudit({
+        request,
+        actorId: granted.actorId,
+        role: granted.role,
+        action: "update-admin-audit-view",
+        status: "denied",
+        resource: "/internal/audit-views/:id",
+        metadata: { auditViewId: id, owner: existing.createdBy }
+      });
+      reply.code(403);
+      return { error: "공유 프리셋 소유자만 수정할 수 있습니다." };
+    }
+
     const parsed = parseAuditViewBody(request.body);
     if ("error" in parsed) {
       reply.code(400);
@@ -608,10 +682,19 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
       action: "update-admin-audit-view",
       status: "allowed",
       resource: "/internal/audit-views/:id",
-      metadata: { auditViewId: id, name: updated.name }
+      metadata: {
+        auditViewId: id,
+        beforeName: existing.name,
+        afterName: updated.name
+      }
     });
 
-    return { data: updated };
+    return {
+      data: {
+        ...updated,
+        canManage: canManageAuditView(updated, granted)
+      }
+    };
   });
 
   app.post("/scan-requests", async (request, reply) => {

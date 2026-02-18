@@ -73,6 +73,21 @@ export const createAdminAuditView = async (params: {
   return toView(result.rows[0]);
 };
 
+export const getAdminAuditViewById = async (id: string): Promise<AdminAuditView | null> => {
+  const pool = getPool();
+  const result = await pool.query<AdminAuditViewRow>(
+    `SELECT id, name, filters, created_by, created_at::text, updated_at::text
+     FROM admin_audit_views
+     WHERE id = $1`,
+    [id]
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+  return toView(result.rows[0]);
+};
+
 export const deleteAdminAuditView = async (id: string): Promise<boolean> => {
   const pool = getPool();
   const result = await pool.query("DELETE FROM admin_audit_views WHERE id = $1", [id]);

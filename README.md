@@ -97,6 +97,7 @@ pnpm -w run dev:all
 - 필터 조회: `/internal/audit-logs?limit=25&status=failed&role=ops&actorId=security-ops&sinceHours=24&cursor=...`
   - 응답: `{ data, nextCursor }`
 - 공유 프리셋 API: `/internal/audit-views*` (ops 권한, 생성/수정/삭제)
+  - 수정/삭제는 생성자 우선, `danger` 권한 키는 override 가능
 - 보관 정리 배치: `pnpm -w --filter @leak/api run audit:prune`
 - 크론용 래퍼: `ADMIN_AUDIT_RETENTION_DAYS=180 ./infra/scripts/run-audit-prune.sh`
 
