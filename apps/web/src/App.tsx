@@ -1328,6 +1328,46 @@ export const App = () => {
     }
   };
 
+  const renameSharedAuditPreset = async (preset: AuditPreset): Promise<void> => {
+    if (!preset.sharedId) {
+      return;
+    }
+
+    const nextName = window.prompt("공유 프리셋 이름", preset.label)?.trim();
+    if (!nextName || nextName.length < 2) {
+      return;
+    }
+
+    setSharedPresetBusy(true);
+    setSharedPresetError("");
+    try {
+      const response = await apiFetch(`/internal/audit-views/${preset.sharedId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: nextName,
+          status: preset.status === "all" ? undefined : preset.status,
+          role: preset.role === "all" ? undefined : preset.role,
+          actorId: preset.actorFilter || undefined,
+          sinceHours: Number.parseInt(preset.sinceHours, 10),
+          sortKey: preset.sortKey,
+          sortDir: preset.sortDir,
+          searchQuery: preset.searchQuery || undefined
+        })
+      });
+
+      if (!response.ok) {
+        setSharedPresetError("공유 프리셋 이름 변경에 실패했습니다.");
+        return;
+      }
+      await loadSharedAuditViews();
+    } catch {
+      setSharedPresetError("공유 프리셋 이름 변경에 실패했습니다.");
+    } finally {
+      setSharedPresetBusy(false);
+    }
+  };
+
   const sharedAuditPresets = sharedAuditViews.map(toSharedViewPreset);
   const allAuditPresets = [...sharedAuditPresets, ...AUDIT_PRESETS, ...customAuditPresets];
 
@@ -1481,6 +1521,16 @@ export const App = () => {
                   title={`${preset.label} 삭제`}
                 >
                   x
+                </button>
+              )}
+              {preset.shared && preset.sharedId && (
+                <button
+                  className="quick-btn audit-preset-remove"
+                  onClick={() => void renameSharedAuditPreset(preset)}
+                  title={`${preset.label} 이름 변경`}
+                  disabled={sharedPresetBusy}
+                >
+                  e
                 </button>
               )}
               {preset.shared && preset.sharedId && (

@@ -62,6 +62,19 @@ const createMockServer = async () => {
       };
     },
     deleteAdminAuditView: async (id) => id === "view-2",
+    updateAdminAuditView: async ({ id, name, filters }) => {
+      if (id !== "view-2") {
+        return null;
+      }
+      return {
+        id,
+        name,
+        filters,
+        createdBy: "security-ops",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    },
     recordAdminAudit: async () => {
       // noop
     },
@@ -264,6 +277,30 @@ const run = async (): Promise<void> => {
     headers: { "x-leak-radar-admin-key": "test-admin-key" }
   });
   assert.equal(deleteAuditViewMissing.statusCode, 404);
+
+  const updateAuditViewBad = await app.inject({
+    method: "PATCH",
+    url: "/internal/audit-views/view-2",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" },
+    payload: { name: "x" }
+  });
+  assert.equal(updateAuditViewBad.statusCode, 400);
+
+  const updateAuditView = await app.inject({
+    method: "PATCH",
+    url: "/internal/audit-views/view-2",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" },
+    payload: { name: "updated ops failures", status: "failed", role: "ops", sinceHours: 6 }
+  });
+  assert.equal(updateAuditView.statusCode, 200);
+
+  const updateAuditViewMissing = await app.inject({
+    method: "PATCH",
+    url: "/internal/audit-views/missing",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" },
+    payload: { name: "updated ops failures" }
+  });
+  assert.equal(updateAuditViewMissing.statusCode, 404);
 
   delete process.env.ADMIN_API_KEY;
 

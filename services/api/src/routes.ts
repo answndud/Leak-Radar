@@ -32,6 +32,7 @@ import {
   createAdminAuditView,
   deleteAdminAuditView,
   listAdminAuditViews,
+  updateAdminAuditView,
   type AdminAuditViewFilters
 } from "./repositories/admin-audit-view-repository";
 import {
@@ -59,6 +60,7 @@ type RoutesDeps = {
   listAdminAuditViews: typeof listAdminAuditViews;
   createAdminAuditView: typeof createAdminAuditView;
   deleteAdminAuditView: typeof deleteAdminAuditView;
+  updateAdminAuditView: typeof updateAdminAuditView;
 };
 
 const defaultDeps: RoutesDeps = {
@@ -78,7 +80,8 @@ const defaultDeps: RoutesDeps = {
   recordAdminAudit,
   listAdminAuditViews,
   createAdminAuditView,
-  deleteAdminAuditView
+  deleteAdminAuditView,
+  updateAdminAuditView
 };
 
 const STATUS_AGE_SLO_MAX_MS = 300000;
@@ -561,6 +564,54 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
     });
 
     return { deleted: 1 };
+  });
+
+  app.patch("/internal/audit-views/:id", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "ops",
+      action: "update-admin-audit-view",
+      resource: "/internal/audit-views/:id"
+    });
+    if (!granted) {
+      return;
+    }
+
+    const params = request.params as { id?: string };
+    const id = typeof params.id === "string" ? params.id : "";
+    if (!id) {
+      reply.code(400);
+      return { error: "id가 필요합니다." };
+    }
+
+    const parsed = parseAuditViewBody(request.body);
+    if ("error" in parsed) {
+      reply.code(400);
+      return { error: parsed.error };
+    }
+
+    const updated = await resolvedDeps.updateAdminAuditView({
+      id,
+      name: parsed.data.name,
+      filters: parsed.data.filters
+    });
+    if (!updated) {
+      reply.code(404);
+      return { error: "Audit view not found" };
+    }
+
+    await writeAudit({
+      request,
+      actorId: granted.actorId,
+      role: granted.role,
+      action: "update-admin-audit-view",
+      status: "allowed",
+      resource: "/internal/audit-views/:id",
+      metadata: { auditViewId: id, name: updated.name }
+    });
+
+    return { data: updated };
   });
 
   app.post("/scan-requests", async (request, reply) => {

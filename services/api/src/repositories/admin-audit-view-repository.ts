@@ -78,3 +78,25 @@ export const deleteAdminAuditView = async (id: string): Promise<boolean> => {
   const result = await pool.query("DELETE FROM admin_audit_views WHERE id = $1", [id]);
   return (result.rowCount ?? 0) > 0;
 };
+
+export const updateAdminAuditView = async (params: {
+  id: string;
+  name: string;
+  filters: AdminAuditViewFilters;
+}): Promise<AdminAuditView | null> => {
+  const pool = getPool();
+  const result = await pool.query<AdminAuditViewRow>(
+    `UPDATE admin_audit_views
+     SET name = $2,
+         filters = $3::jsonb,
+         updated_at = now()
+     WHERE id = $1
+     RETURNING id, name, filters, created_by, created_at::text, updated_at::text`,
+    [params.id, params.name, JSON.stringify(params.filters)]
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+  return toView(result.rows[0]);
+};

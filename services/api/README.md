@@ -32,6 +32,7 @@ Explore/Leaderboard 데이터를 제공하는 API 서버입니다.
 - 공유 프리셋
   - `GET /internal/audit-views`
   - `POST /internal/audit-views`
+  - `PATCH /internal/audit-views/:id`
   - `DELETE /internal/audit-views/:id`
 - 정리 배치: `pnpm -w --filter @leak/api run audit:prune`
   - `ADMIN_AUDIT_RETENTION_DAYS` 값(예: 180) 기준으로 만료 로그 삭제

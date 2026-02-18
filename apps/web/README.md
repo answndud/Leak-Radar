@@ -16,6 +16,7 @@ Explore/Leaderboard UI를 제공하는 프론트엔드 앱입니다.
 - 감사로그 커스텀 프리셋 저장/삭제(로컬 저장)
 - 감사로그 커스텀 프리셋 export/import(JSON)
 - 감사로그 공유 프리셋 저장/삭제(API, ops 권한)
+- 감사로그 공유 프리셋 이름 변경(API, ops 권한)
 
 ## 실행
 - 개발 서버: `pnpm -w run dev:web`
