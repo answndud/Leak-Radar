@@ -82,7 +82,7 @@ export const DETECTION_FIXTURES: DetectionFixture[] = [
   },
   {
     name: "supabase token",
-    line: "SUPABASE_ACCESS_TOKEN=sbp_0123456789abcdef0123456789abcdef01234567",
+    line: "SUPABASE_ACCESS_TOKEN=" + ["sbp_", "0123456789abcdef0123456789", "abcdef01234567"].join(""),
     expectedProviders: ["supabase"]
   },
   {
