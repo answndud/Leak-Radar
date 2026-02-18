@@ -81,6 +81,21 @@ type SharedAuditView = {
   canManage?: boolean;
 };
 
+type SharedPresetEditor = {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  isPinned: boolean;
+  status: AuditStatusFilter;
+  role: AuditRoleFilter;
+  sinceHours: AuditSinceHours;
+  actorId: string;
+  searchQuery: string;
+  sortKey: AuditSortKey;
+  sortDir: AuditSortDir;
+};
+
 type LeakResponse = {
   data: LeakRecord[];
   page: number;
@@ -500,6 +515,8 @@ export const App = () => {
   const [sharedPresetCategoryFilter, setSharedPresetCategoryFilter] = useState("all");
   const [sharedPresetBusy, setSharedPresetBusy] = useState(false);
   const [sharedPresetError, setSharedPresetError] = useState("");
+  const [sharedPresetEditor, setSharedPresetEditor] = useState<SharedPresetEditor | null>(null);
+  const [sharedPresetEditorSaving, setSharedPresetEditorSaving] = useState(false);
   const presetImportInputRef = useRef<HTMLInputElement | null>(null);
   const [auditLogs, setAuditLogs] = useState<AdminAuditEntry[]>([]);
   const [auditNextCursor, setAuditNextCursor] = useState<string | null>(null);
@@ -1347,47 +1364,79 @@ export const App = () => {
     }
   };
 
-  const renameSharedAuditPreset = async (preset: AuditPreset): Promise<void> => {
+  const openSharedPresetEditor = (preset: AuditPreset): void => {
     if (!preset.sharedId) {
       return;
     }
 
-    const nextName = window.prompt("공유 프리셋 이름", preset.label)?.trim();
-    if (!nextName || nextName.length < 2) {
+    const source = sharedViewById.get(preset.sharedId);
+    if (!source) {
       return;
     }
 
-    setSharedPresetBusy(true);
+    setSharedPresetEditor({
+      id: source.id,
+      name: source.name,
+      category: source.category,
+      description: source.description ?? "",
+      isPinned: source.isPinned,
+      status: toAuditStatusFilter(source.filters.status),
+      role: toAuditRoleFilter(source.filters.role),
+      sinceHours: toAuditSinceHours(
+        typeof source.filters.sinceHours === "number" && Number.isFinite(source.filters.sinceHours)
+          ? String(Math.max(0, Math.floor(source.filters.sinceHours)))
+          : undefined
+      ),
+      actorId: typeof source.filters.actorId === "string" ? source.filters.actorId : "",
+      searchQuery: typeof source.filters.searchQuery === "string" ? source.filters.searchQuery : "",
+      sortKey: toAuditSortKey(source.filters.sortKey),
+      sortDir: toAuditSortDir(source.filters.sortDir)
+    });
+  };
+
+  const saveSharedPresetEditor = async (): Promise<void> => {
+    if (!sharedPresetEditor) {
+      return;
+    }
+
+    const name = sharedPresetEditor.name.trim();
+    if (name.length < 2) {
+      setSharedPresetError("공유 프리셋 이름은 2자 이상이어야 합니다.");
+      return;
+    }
+
+    setSharedPresetEditorSaving(true);
     setSharedPresetError("");
     try {
-      const source = sharedViewById.get(preset.sharedId);
-      const response = await apiFetch(`/internal/audit-views/${preset.sharedId}`, {
+      const response = await apiFetch(`/internal/audit-views/${sharedPresetEditor.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: nextName,
-          category: source?.category ?? preset.category ?? "general",
-          description: source?.description ?? preset.description,
-          isPinned: source?.isPinned ?? preset.isPinned === true,
-          status: preset.status === "all" ? undefined : preset.status,
-          role: preset.role === "all" ? undefined : preset.role,
-          actorId: preset.actorFilter || undefined,
-          sinceHours: Number.parseInt(preset.sinceHours, 10),
-          sortKey: preset.sortKey,
-          sortDir: preset.sortDir,
-          searchQuery: preset.searchQuery || undefined
+          name,
+          category: sharedPresetEditor.category.trim() || "general",
+          description: sharedPresetEditor.description.trim() || undefined,
+          isPinned: sharedPresetEditor.isPinned,
+          status: sharedPresetEditor.status === "all" ? undefined : sharedPresetEditor.status,
+          role: sharedPresetEditor.role === "all" ? undefined : sharedPresetEditor.role,
+          actorId: sharedPresetEditor.actorId.trim() || undefined,
+          sinceHours: Number.parseInt(sharedPresetEditor.sinceHours, 10),
+          sortKey: sharedPresetEditor.sortKey,
+          sortDir: sharedPresetEditor.sortDir,
+          searchQuery: sharedPresetEditor.searchQuery.trim() || undefined
         })
       });
 
       if (!response.ok) {
-        setSharedPresetError("공유 프리셋 이름 변경에 실패했습니다.");
+        setSharedPresetError("공유 프리셋 저장에 실패했습니다.");
         return;
       }
+
+      setSharedPresetEditor(null);
       await loadSharedAuditViews();
     } catch {
-      setSharedPresetError("공유 프리셋 이름 변경에 실패했습니다.");
+      setSharedPresetError("공유 프리셋 저장에 실패했습니다.");
     } finally {
-      setSharedPresetBusy(false);
+      setSharedPresetEditorSaving(false);
     }
   };
 
@@ -1597,7 +1646,7 @@ export const App = () => {
               {preset.shared && preset.sharedId && (
                 <button
                   className="quick-btn audit-preset-remove"
-                  onClick={() => void renameSharedAuditPreset(preset)}
+                  onClick={() => openSharedPresetEditor(preset)}
                   title={`${preset.label} 이름 변경`}
                   disabled={sharedPresetBusy || !sharedManageById.get(preset.sharedId)}
                 >
@@ -1960,6 +2009,116 @@ export const App = () => {
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
               <button className="action-btn small" onClick={() => void copyAuditMetadata()}>
                 metadata 복사
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {sharedPresetEditor && (
+        <div className="scan-overlay" onClick={() => setSharedPresetEditor(null)}>
+          <div className="scan-overlay-card audit-detail" onClick={(event) => event.stopPropagation()}>
+            <div className="panel-header" style={{ marginBottom: "12px" }}>
+              <h2 style={{ margin: 0 }}>공유 프리셋 편집</h2>
+              <button className="quick-btn" onClick={() => setSharedPresetEditor(null)}>닫기</button>
+            </div>
+            <div className="audit-editor-grid">
+              <input
+                className="control-field"
+                value={sharedPresetEditor.name}
+                onChange={(event) => setSharedPresetEditor((prev) => prev ? { ...prev, name: event.target.value } : prev)}
+                placeholder="이름"
+              />
+              <input
+                className="control-field"
+                value={sharedPresetEditor.category}
+                onChange={(event) => setSharedPresetEditor((prev) => prev ? { ...prev, category: event.target.value } : prev)}
+                placeholder="category"
+              />
+              <input
+                className="control-field"
+                value={sharedPresetEditor.description}
+                onChange={(event) => setSharedPresetEditor((prev) => prev ? { ...prev, description: event.target.value } : prev)}
+                placeholder="설명"
+              />
+              <label className="status-note" style={{ margin: 0, display: "inline-flex", gap: "6px", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={sharedPresetEditor.isPinned}
+                  onChange={(event) => setSharedPresetEditor((prev) => prev ? { ...prev, isPinned: event.target.checked } : prev)}
+                />
+                pin
+              </label>
+              <select
+                className="control-field"
+                value={sharedPresetEditor.status}
+                onChange={(event) => setSharedPresetEditor((prev) => prev ? { ...prev, status: toAuditStatusFilter(event.target.value) } : prev)}
+              >
+                <option value="all">전체 상태</option>
+                <option value="allowed">허용</option>
+                <option value="denied">거부</option>
+                <option value="failed">실패</option>
+              </select>
+              <select
+                className="control-field"
+                value={sharedPresetEditor.role}
+                onChange={(event) => setSharedPresetEditor((prev) => prev ? { ...prev, role: toAuditRoleFilter(event.target.value) } : prev)}
+              >
+                <option value="all">전체 역할</option>
+                <option value="ops">OPS</option>
+                <option value="read">READ</option>
+                <option value="write">WRITE</option>
+                <option value="danger">DANGER</option>
+              </select>
+              <select
+                className="control-field"
+                value={sharedPresetEditor.sinceHours}
+                onChange={(event) => setSharedPresetEditor((prev) => prev ? { ...prev, sinceHours: toAuditSinceHours(event.target.value) } : prev)}
+              >
+                <option value="0">전체 기간</option>
+                <option value="1">1시간</option>
+                <option value="6">6시간</option>
+                <option value="24">24시간</option>
+                <option value="168">7일</option>
+              </select>
+              <input
+                className="control-field"
+                value={sharedPresetEditor.actorId}
+                onChange={(event) => setSharedPresetEditor((prev) => prev ? { ...prev, actorId: event.target.value } : prev)}
+                placeholder="actor id"
+              />
+              <input
+                className="control-field"
+                value={sharedPresetEditor.searchQuery}
+                onChange={(event) => setSharedPresetEditor((prev) => prev ? { ...prev, searchQuery: event.target.value } : prev)}
+                placeholder="search query"
+              />
+              <select
+                className="control-field"
+                value={sharedPresetEditor.sortKey}
+                onChange={(event) => setSharedPresetEditor((prev) => prev ? { ...prev, sortKey: toAuditSortKey(event.target.value) } : prev)}
+              >
+                <option value="occurredAt">occurredAt</option>
+                <option value="status">status</option>
+                <option value="role">role</option>
+                <option value="actorId">actorId</option>
+                <option value="action">action</option>
+                <option value="resource">resource</option>
+              </select>
+              <select
+                className="control-field"
+                value={sharedPresetEditor.sortDir}
+                onChange={(event) => setSharedPresetEditor((prev) => prev ? { ...prev, sortDir: toAuditSortDir(event.target.value) } : prev)}
+              >
+                <option value="desc">desc</option>
+                <option value="asc">asc</option>
+              </select>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "12px" }}>
+              <button className="quick-btn" onClick={() => setSharedPresetEditor(null)}>
+                취소
+              </button>
+              <button className="action-btn small" onClick={() => void saveSharedPresetEditor()} disabled={sharedPresetEditorSaving}>
+                {sharedPresetEditorSaving ? "저장 중..." : "저장"}
               </button>
             </div>
           </div>

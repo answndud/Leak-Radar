@@ -20,6 +20,7 @@ Explore/Leaderboard UI를 제공하는 프론트엔드 앱입니다.
 - 공유 프리셋 수정/삭제 버튼은 소유자 또는 override 권한에서만 활성화
 - 공유 프리셋 메타데이터(category/description/pin) 입력 지원
 - 공유 프리셋 카테고리 필터 지원
+- 공유 프리셋 편집 모달(필터/정렬/메타데이터 전체 수정)
 
 ## 실행
 - 개발 서버: `pnpm -w run dev:web`
