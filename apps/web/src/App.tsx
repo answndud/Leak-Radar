@@ -765,6 +765,14 @@ export const App = () => {
     return sorted;
   }, [auditLogs, auditSearchQuery, auditSortDir, auditSortKey]);
 
+  const sharedPresetHistory = useMemo(
+    () =>
+      auditLogs
+        .filter((item) => item.action.includes("audit-view"))
+        .slice(0, 8),
+    [auditLogs]
+  );
+
   const activityPath = useMemo(() => {
     if (activity.length === 0) {
       return "";
@@ -1751,6 +1759,19 @@ export const App = () => {
         </span>
       </div>
       {sharedPresetError && <div className="status-note">{sharedPresetError}</div>}
+      {sharedPresetHistory.length > 0 && (
+        <div className="audit-history">
+          <span className="status-note" style={{ margin: 0 }}>공유 프리셋 변경 이력</span>
+          {sharedPresetHistory.map((item) => (
+            <div key={item.id} className="audit-history-item">
+              <span>{timeAgo(item.occurredAt)}</span>
+              <span>{item.actorId ?? "(미지정)"}</span>
+              <span>{item.action}</span>
+              <span>{item.status}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {auditLoadError ? (
         <div className="empty">{auditLoadError}</div>
       ) : auditLoading && displayedAuditLogs.length === 0 ? (

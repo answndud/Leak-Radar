@@ -21,6 +21,7 @@ Explore/Leaderboard UI를 제공하는 프론트엔드 앱입니다.
 - 공유 프리셋 메타데이터(category/description/pin) 입력 지원
 - 공유 프리셋 카테고리 필터 지원
 - 공유 프리셋 편집 모달(필터/정렬/메타데이터 전체 수정)
+- 공유 프리셋 변경 이력(최근 감사로그) 패널 제공
 
 ## 실행
 - 개발 서버: `pnpm -w run dev:web`
