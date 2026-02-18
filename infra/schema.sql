@@ -85,3 +85,15 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
 
 CREATE INDEX IF NOT EXISTS admin_audit_logs_occurred_at
   ON admin_audit_logs (occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS admin_audit_views (
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL,
+  filters JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS admin_audit_views_updated_at
+  ON admin_audit_views (updated_at DESC);

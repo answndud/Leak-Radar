@@ -29,6 +29,10 @@ Explore/Leaderboard 데이터를 제공하는 API 서버입니다.
 ## 감사로그 운영
 - 조회: `GET /internal/audit-logs?limit=25&status=failed&role=ops&actorId=security-ops&sinceHours=24&cursor=...`
   - 응답: `{ data: [...], nextCursor: "..." | null }`
+- 공유 프리셋
+  - `GET /internal/audit-views`
+  - `POST /internal/audit-views`
+  - `DELETE /internal/audit-views/:id`
 - 정리 배치: `pnpm -w --filter @leak/api run audit:prune`
   - `ADMIN_AUDIT_RETENTION_DAYS` 값(예: 180) 기준으로 만료 로그 삭제
 

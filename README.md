@@ -91,10 +91,12 @@ pnpm -w run dev:all
 - 웹 감사로그 패널은 필터/검색/정렬 상태를 URL 쿼리로 동기화합니다.
 - 웹 감사로그 패널은 프리셋 버튼과 필터 링크 복사 기능을 제공합니다.
 - 웹 감사로그 패널은 커스텀 프리셋을 로컬에 저장해 재사용할 수 있습니다.
+- 웹 감사로그 커스텀 프리셋은 JSON export/import를 지원합니다.
 
 감사로그 운영:
 - 필터 조회: `/internal/audit-logs?limit=25&status=failed&role=ops&actorId=security-ops&sinceHours=24&cursor=...`
   - 응답: `{ data, nextCursor }`
+- 공유 프리셋 API: `/internal/audit-views*` (ops 권한)
 - 보관 정리 배치: `pnpm -w --filter @leak/api run audit:prune`
 - 크론용 래퍼: `ADMIN_AUDIT_RETENTION_DAYS=180 ./infra/scripts/run-audit-prune.sh`
 

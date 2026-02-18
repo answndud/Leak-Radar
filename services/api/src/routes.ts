@@ -29,6 +29,12 @@ import {
   type AdminAuditStatus
 } from "./repositories/admin-audit-repository";
 import {
+  createAdminAuditView,
+  deleteAdminAuditView,
+  listAdminAuditViews,
+  type AdminAuditViewFilters
+} from "./repositories/admin-audit-view-repository";
+import {
   parseScanRequestBody,
   parseScheduleBody,
   parseScheduleToggleBody
@@ -50,6 +56,9 @@ type RoutesDeps = {
   getWorkerRuntimeStatus: () => Promise<WorkerRuntimeStatus>;
   listAdminAuditLogs: typeof listAdminAuditLogs;
   recordAdminAudit: typeof recordAdminAudit;
+  listAdminAuditViews: typeof listAdminAuditViews;
+  createAdminAuditView: typeof createAdminAuditView;
+  deleteAdminAuditView: typeof deleteAdminAuditView;
 };
 
 const defaultDeps: RoutesDeps = {
@@ -66,7 +75,10 @@ const defaultDeps: RoutesDeps = {
   toggleSchedule,
   getWorkerRuntimeStatus,
   listAdminAuditLogs,
-  recordAdminAudit
+  recordAdminAudit,
+  listAdminAuditViews,
+  createAdminAuditView,
+  deleteAdminAuditView
 };
 
 const STATUS_AGE_SLO_MAX_MS = 300000;
@@ -161,6 +173,63 @@ const parseAuditQuery = (query: Record<string, unknown>): AdminAuditQuery => {
     cursor: typeof query.cursor === "string" && query.cursor.trim().length > 0
       ? query.cursor.trim()
       : undefined
+  };
+};
+
+const parseAuditViewBody = (body: unknown):
+  { data: { name: string; filters: AdminAuditViewFilters } }
+  | { error: string } => {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { error: "요청 본문이 필요합니다." };
+  }
+
+  const record = body as Record<string, unknown>;
+  const name = typeof record.name === "string" ? record.name.trim() : "";
+  if (name.length < 2 || name.length > 64) {
+    return { error: "name은 2~64자여야 합니다." };
+  }
+
+  const status = parseAuditStatus(record.status);
+  const role =
+    record.role === "ops" ||
+    record.role === "read" ||
+    record.role === "write" ||
+    record.role === "danger"
+      ? record.role
+      : undefined;
+  const actorId = typeof record.actorId === "string" && record.actorId.trim().length > 0
+    ? record.actorId.trim()
+    : undefined;
+  const sinceHours = typeof record.sinceHours === "number" && Number.isFinite(record.sinceHours)
+    ? Math.max(0, Math.floor(record.sinceHours))
+    : undefined;
+  const sortKey =
+    record.sortKey === "occurredAt" ||
+    record.sortKey === "status" ||
+    record.sortKey === "role" ||
+    record.sortKey === "actorId" ||
+    record.sortKey === "action" ||
+    record.sortKey === "resource"
+      ? record.sortKey
+      : undefined;
+  const sortDir = record.sortDir === "asc" || record.sortDir === "desc" ? record.sortDir : undefined;
+  const searchQuery = typeof record.searchQuery === "string" && record.searchQuery.trim().length > 0
+    ? record.searchQuery.trim().slice(0, 120)
+    : undefined;
+
+  return {
+    data: {
+      name,
+      filters: {
+        status,
+        role,
+        actorId,
+        sinceHours,
+        sortKey,
+        sortDir,
+        searchQuery
+      }
+    }
   };
 };
 
@@ -393,6 +462,105 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
 
     const query = parseAuditQuery(request.query as Record<string, unknown>);
     return await resolvedDeps.listAdminAuditLogs(query);
+  });
+
+  app.get("/internal/audit-views", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "ops",
+      action: "list-admin-audit-views",
+      resource: "/internal/audit-views"
+    });
+    if (!granted) {
+      return;
+    }
+
+    return { data: await resolvedDeps.listAdminAuditViews() };
+  });
+
+  app.post("/internal/audit-views", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "ops",
+      action: "create-admin-audit-view",
+      resource: "/internal/audit-views"
+    });
+    if (!granted) {
+      return;
+    }
+
+    const parsed = parseAuditViewBody(request.body);
+    if ("error" in parsed) {
+      await writeAudit({
+        request,
+        actorId: granted.actorId,
+        role: granted.role,
+        action: "create-admin-audit-view",
+        status: "failed",
+        resource: "/internal/audit-views",
+        metadata: { reason: parsed.error }
+      });
+      reply.code(400);
+      return { error: parsed.error };
+    }
+
+    const created = await resolvedDeps.createAdminAuditView({
+      name: parsed.data.name,
+      filters: parsed.data.filters,
+      createdBy: granted.actorId
+    });
+
+    await writeAudit({
+      request,
+      actorId: granted.actorId,
+      role: granted.role,
+      action: "create-admin-audit-view",
+      status: "allowed",
+      resource: "/internal/audit-views",
+      metadata: { auditViewId: created.id, name: created.name }
+    });
+
+    return { data: created };
+  });
+
+  app.delete("/internal/audit-views/:id", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "ops",
+      action: "delete-admin-audit-view",
+      resource: "/internal/audit-views/:id"
+    });
+    if (!granted) {
+      return;
+    }
+
+    const params = request.params as { id?: string };
+    const id = typeof params.id === "string" ? params.id : "";
+    if (!id) {
+      reply.code(400);
+      return { error: "id가 필요합니다." };
+    }
+
+    const deleted = await resolvedDeps.deleteAdminAuditView(id);
+    if (!deleted) {
+      reply.code(404);
+      return { error: "Audit view not found" };
+    }
+
+    await writeAudit({
+      request,
+      actorId: granted.actorId,
+      role: granted.role,
+      action: "delete-admin-audit-view",
+      status: "allowed",
+      resource: "/internal/audit-views/:id",
+      metadata: { auditViewId: id }
+    });
+
+    return { deleted: 1 };
   });
 
   app.post("/scan-requests", async (request, reply) => {

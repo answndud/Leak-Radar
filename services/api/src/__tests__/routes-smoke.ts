@@ -6,6 +6,7 @@ import { registerRoutes } from "../routes";
 const createMockServer = async () => {
   const app = Fastify();
   let capturedAuditQuery: unknown = null;
+  let createdAuditViewName = "";
 
   await registerRoutes(app, {
     listLeaks: async () => ({ data: [], page: 1, pageSize: 24, total: 0 }),
@@ -39,6 +40,28 @@ const createMockServer = async () => {
       capturedAuditQuery = query;
       return { data: [], nextCursor: null };
     },
+    listAdminAuditViews: async () => ([
+      {
+        id: "view-1",
+        name: "failed 24h",
+        filters: { status: "failed", sinceHours: 24 },
+        createdBy: "security-ops",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+    ]),
+    createAdminAuditView: async ({ name, filters, createdBy }) => {
+      createdAuditViewName = name;
+      return {
+        id: "view-2",
+        name,
+        filters,
+        createdBy: createdBy ?? null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    },
+    deleteAdminAuditView: async (id) => id === "view-2",
     recordAdminAudit: async () => {
       // noop
     },
@@ -83,11 +106,15 @@ const createMockServer = async () => {
     })
   });
 
-  return { app, getCapturedAuditQuery: () => capturedAuditQuery };
+  return {
+    app,
+    getCapturedAuditQuery: () => capturedAuditQuery,
+    getCreatedAuditViewName: () => createdAuditViewName
+  };
 };
 
 const run = async (): Promise<void> => {
-  const { app, getCapturedAuditQuery } = await createMockServer();
+  const { app, getCapturedAuditQuery, getCreatedAuditViewName } = await createMockServer();
 
   process.env.ADMIN_API_KEY = "test-admin-key";
 
@@ -193,6 +220,51 @@ const run = async (): Promise<void> => {
     cursor: "abc"
   });
 
+  const listAuditViews = await app.inject({
+    method: "GET",
+    url: "/internal/audit-views",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" }
+  });
+  assert.equal(listAuditViews.statusCode, 200);
+
+  const createAuditViewBad = await app.inject({
+    method: "POST",
+    url: "/internal/audit-views",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" },
+    payload: { name: "x" }
+  });
+  assert.equal(createAuditViewBad.statusCode, 400);
+
+  const createAuditView = await app.inject({
+    method: "POST",
+    url: "/internal/audit-views",
+    headers: { "x-leak-radar-admin-key": "test-admin-key", "x-leak-radar-admin-id": "security-ops" },
+    payload: {
+      name: "ops failures",
+      status: "failed",
+      role: "ops",
+      sinceHours: 24,
+      sortKey: "occurredAt",
+      sortDir: "desc"
+    }
+  });
+  assert.equal(createAuditView.statusCode, 200);
+  assert.equal(getCreatedAuditViewName(), "ops failures");
+
+  const deleteAuditView = await app.inject({
+    method: "DELETE",
+    url: "/internal/audit-views/view-2",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" }
+  });
+  assert.equal(deleteAuditView.statusCode, 200);
+
+  const deleteAuditViewMissing = await app.inject({
+    method: "DELETE",
+    url: "/internal/audit-views/missing",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" }
+  });
+  assert.equal(deleteAuditViewMissing.statusCode, 404);
+
   delete process.env.ADMIN_API_KEY;
 
   process.env.ADMIN_API_KEYS = "ops-key:read|ops;writer-key:read|write";
@@ -210,6 +282,13 @@ const run = async (): Promise<void> => {
     headers: { "x-leak-radar-admin-key": "ops-key" }
   });
   assert.equal(roleAllowed.statusCode, 200);
+
+  const opsOnlyForbidden = await app.inject({
+    method: "GET",
+    url: "/internal/audit-views",
+    headers: { "x-leak-radar-admin-key": "writer-key" }
+  });
+  assert.equal(opsOnlyForbidden.statusCode, 403);
 
   delete process.env.ADMIN_API_KEYS;
 

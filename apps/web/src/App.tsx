@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import type {
   ActivityPoint,
   LeaderboardEntry,
@@ -53,6 +53,25 @@ type AuditPreset = {
   actorFilter?: string;
   searchQuery?: string;
   custom?: boolean;
+  shared?: boolean;
+  sharedId?: string;
+};
+
+type SharedAuditView = {
+  id: string;
+  name: string;
+  filters: {
+    status?: "allowed" | "denied" | "failed";
+    role?: "ops" | "read" | "write" | "danger";
+    actorId?: string;
+    sinceHours?: number;
+    sortKey?: AuditSortKey;
+    sortDir?: AuditSortDir;
+    searchQuery?: string;
+  };
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type LeakResponse = {
@@ -240,6 +259,24 @@ const toCustomAuditPreset = (value: unknown): AuditPreset | null => {
     custom: true
   };
 };
+
+const toSharedViewPreset = (view: SharedAuditView): AuditPreset => ({
+  id: `shared-${view.id}`,
+  label: view.name,
+  status: toAuditStatusFilter(view.filters.status),
+  role: toAuditRoleFilter(view.filters.role),
+  sinceHours: toAuditSinceHours(
+    typeof view.filters.sinceHours === "number" && Number.isFinite(view.filters.sinceHours)
+      ? String(Math.max(0, Math.floor(view.filters.sinceHours)))
+      : undefined
+  ),
+  sortKey: toAuditSortKey(view.filters.sortKey),
+  sortDir: toAuditSortDir(view.filters.sortDir),
+  actorFilter: typeof view.filters.actorId === "string" ? view.filters.actorId : "",
+  searchQuery: typeof view.filters.searchQuery === "string" ? view.filters.searchQuery : "",
+  shared: true,
+  sharedId: view.id
+});
 
 const readAdminActorId = (): string | undefined => {
   if (typeof window === "undefined") {
@@ -443,8 +480,13 @@ export const App = () => {
     toAuditSortDir(readUrlParam("audit_dir"))
   );
   const [selectedAudit, setSelectedAudit] = useState<AdminAuditEntry | null>(null);
+  const [sharedAuditViews, setSharedAuditViews] = useState<SharedAuditView[]>([]);
   const [customAuditPresets, setCustomAuditPresets] = useState<AuditPreset[]>([]);
   const [newPresetLabel, setNewPresetLabel] = useState("");
+  const [newSharedPresetLabel, setNewSharedPresetLabel] = useState("");
+  const [sharedPresetBusy, setSharedPresetBusy] = useState(false);
+  const [sharedPresetError, setSharedPresetError] = useState("");
+  const presetImportInputRef = useRef<HTMLInputElement | null>(null);
   const [auditLogs, setAuditLogs] = useState<AdminAuditEntry[]>([]);
   const [auditNextCursor, setAuditNextCursor] = useState<string | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
@@ -591,9 +633,28 @@ export const App = () => {
     }
   }, [auditLogsPathBase]);
 
+  const loadSharedAuditViews = useCallback(async (): Promise<void> => {
+    try {
+      const response = await apiFetch("/internal/audit-views");
+      if (!response.ok) {
+        setSharedPresetError("공유 프리셋을 불러오지 못했습니다.");
+        return;
+      }
+      const payload = (await response.json()) as { data?: SharedAuditView[] };
+      setSharedAuditViews(Array.isArray(payload.data) ? payload.data : []);
+      setSharedPresetError("");
+    } catch {
+      setSharedPresetError("공유 프리셋을 불러오지 못했습니다.");
+    }
+  }, []);
+
   useEffect(() => {
     void loadAuditLogs(undefined, false);
   }, [loadAuditLogs]);
+
+  useEffect(() => {
+    void loadSharedAuditViews();
+  }, [loadSharedAuditViews]);
 
   const loadMoreAuditLogs = useCallback(() => {
     if (!auditNextCursor || auditLoadingRef.current) {
@@ -1212,7 +1273,136 @@ export const App = () => {
     setCustomAuditPresets((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const allAuditPresets = [...AUDIT_PRESETS, ...customAuditPresets];
+  const saveCurrentSharedAuditPreset = async (): Promise<void> => {
+    const name = newSharedPresetLabel.trim();
+    if (name.length < 2) {
+      return;
+    }
+
+    setSharedPresetBusy(true);
+    setSharedPresetError("");
+    try {
+      const response = await apiFetch("/internal/audit-views", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          status: auditStatusFilter === "all" ? undefined : auditStatusFilter,
+          role: auditRoleFilter === "all" ? undefined : auditRoleFilter,
+          actorId: auditActorFilter.trim() || undefined,
+          sinceHours: Number.parseInt(auditSinceHours, 10),
+          sortKey: auditSortKey,
+          sortDir: auditSortDir,
+          searchQuery: auditSearchQuery.trim() || undefined
+        })
+      });
+
+      if (!response.ok) {
+        setSharedPresetError("공유 프리셋 저장에 실패했습니다.");
+        return;
+      }
+
+      setNewSharedPresetLabel("");
+      await loadSharedAuditViews();
+    } catch {
+      setSharedPresetError("공유 프리셋 저장에 실패했습니다.");
+    } finally {
+      setSharedPresetBusy(false);
+    }
+  };
+
+  const removeSharedAuditPreset = async (id: string): Promise<void> => {
+    setSharedPresetBusy(true);
+    setSharedPresetError("");
+    try {
+      const response = await apiFetch(`/internal/audit-views/${id}`, { method: "DELETE" });
+      if (!response.ok) {
+        setSharedPresetError("공유 프리셋 삭제에 실패했습니다.");
+        return;
+      }
+      await loadSharedAuditViews();
+    } catch {
+      setSharedPresetError("공유 프리셋 삭제에 실패했습니다.");
+    } finally {
+      setSharedPresetBusy(false);
+    }
+  };
+
+  const sharedAuditPresets = sharedAuditViews.map(toSharedViewPreset);
+  const allAuditPresets = [...sharedAuditPresets, ...AUDIT_PRESETS, ...customAuditPresets];
+
+  const exportCustomAuditPresets = (): void => {
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      presets: customAuditPresets
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `apiradar-audit-presets-${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const importCustomAuditPresets = async (file: File): Promise<void> => {
+    const text = await file.text();
+    const parsed = JSON.parse(text) as { presets?: unknown };
+    if (!parsed || !Array.isArray(parsed.presets)) {
+      return;
+    }
+
+    const incoming = parsed.presets
+      .map((item) => toCustomAuditPreset(item))
+      .filter((item): item is AuditPreset => item !== null);
+    if (incoming.length === 0) {
+      return;
+    }
+
+    const existingIds = new Set(customAuditPresets.map((item) => item.id));
+    const normalized = incoming.map((preset) => {
+      if (!existingIds.has(preset.id)) {
+        existingIds.add(preset.id);
+        return preset;
+      }
+      const clonedId = `${preset.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+      existingIds.add(clonedId);
+      return { ...preset, id: clonedId };
+    });
+
+    setCustomAuditPresets((prev) => {
+      const merged = [...normalized, ...prev];
+      const seen = new Set<string>();
+      const deduped: AuditPreset[] = [];
+      for (const item of merged) {
+        if (seen.has(item.id)) {
+          continue;
+        }
+        seen.add(item.id);
+        deduped.push(item);
+      }
+      return deduped.slice(0, 20);
+    });
+  };
+
+  const onPresetImportChange = (event: ChangeEvent<HTMLInputElement>): void => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    void importCustomAuditPresets(file)
+      .catch(() => {
+        // ignore malformed preset files
+      })
+      .finally(() => {
+        if (presetImportInputRef.current) {
+          presetImportInputRef.current.value = "";
+        }
+      });
+  };
 
   const renderAuditLogsPanel = () => (
     <section className="panel" style={{ marginTop: "1rem" }}>
@@ -1282,13 +1472,23 @@ export const App = () => {
                 className="quick-btn audit-preset-btn"
                 onClick={() => applyAuditPreset(preset)}
               >
-                {preset.custom ? `★ ${preset.label}` : preset.label}
+                {preset.shared ? `☁ ${preset.label}` : preset.custom ? `★ ${preset.label}` : preset.label}
               </button>
               {preset.custom && (
                 <button
                   className="quick-btn audit-preset-remove"
                   onClick={() => removeCustomAuditPreset(preset.id)}
                   title={`${preset.label} 삭제`}
+                >
+                  x
+                </button>
+              )}
+              {preset.shared && preset.sharedId && (
+                <button
+                  className="quick-btn audit-preset-remove"
+                  onClick={() => void removeSharedAuditPreset(preset.sharedId ?? "")}
+                  title={`${preset.label} 공유 프리셋 삭제`}
+                  disabled={sharedPresetBusy}
                 >
                   x
                 </button>
@@ -1307,8 +1507,49 @@ export const App = () => {
             onClick={saveCurrentAuditPreset}
             disabled={newPresetLabel.trim().length < 2}
           >
-            현재 필터 저장
+            로컬 저장
           </button>
+          <input
+            className="control-field"
+            style={{ padding: "6px 8px", minWidth: "120px", fontSize: "12px" }}
+            value={newSharedPresetLabel}
+            onChange={(event) => setNewSharedPresetLabel(event.target.value)}
+            placeholder="공유 프리셋 이름"
+          />
+          <button
+            className="action-btn small"
+            onClick={() => void saveCurrentSharedAuditPreset()}
+            disabled={newSharedPresetLabel.trim().length < 2 || sharedPresetBusy}
+          >
+            공유 저장
+          </button>
+          <button
+            className="quick-btn"
+            onClick={() => void loadSharedAuditViews()}
+            disabled={sharedPresetBusy}
+          >
+            공유 새로고침
+          </button>
+          <button
+            className="action-btn small"
+            onClick={exportCustomAuditPresets}
+            disabled={customAuditPresets.length === 0}
+          >
+            프리셋 내보내기
+          </button>
+          <button
+            className="action-btn small"
+            onClick={() => presetImportInputRef.current?.click()}
+          >
+            프리셋 가져오기
+          </button>
+          <input
+            ref={presetImportInputRef}
+            type="file"
+            accept="application/json"
+            style={{ display: "none" }}
+            onChange={onPresetImportChange}
+          />
           <button className="action-btn small" onClick={() => void copyCurrentAuditLink()}>
             필터 링크 복사
           </button>
@@ -1317,6 +1558,7 @@ export const App = () => {
           {displayedAuditLogs.length} / {auditLogs.length}건 표시
         </span>
       </div>
+      {sharedPresetError && <div className="status-note">{sharedPresetError}</div>}
       {auditLoadError ? (
         <div className="empty">{auditLoadError}</div>
       ) : auditLoading && displayedAuditLogs.length === 0 ? (
