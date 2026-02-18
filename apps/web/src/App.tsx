@@ -1364,6 +1364,9 @@ export const App = () => {
   };
 
   const removeSharedAuditPreset = async (id: string): Promise<void> => {
+    if (!window.confirm("공유 프리셋을 삭제(soft-delete)하시겠습니까?")) {
+      return;
+    }
     setSharedPresetBusy(true);
     setSharedPresetError("");
     try {
@@ -1667,7 +1670,10 @@ export const App = () => {
               <button
                 className="quick-btn audit-preset-btn"
                 onClick={() => applyAuditPreset(preset)}
-                title={preset.shared && preset.sharedId ? `owner: ${sharedOwnerById.get(preset.sharedId) ?? "(미지정)"}` : undefined}
+                title={preset.shared && preset.sharedId
+                  ? `${preset.deletedAt ? "삭제됨" : "활성"} · owner: ${sharedOwnerById.get(preset.sharedId) ?? "(미지정)"}`
+                  : undefined}
+                disabled={Boolean(preset.deletedAt)}
               >
                 {preset.shared
                   ? `${preset.deletedAt ? "🗃" : preset.isPinned ? "📌" : "☁"} ${preset.category ? `[${preset.category}] ` : ""}${preset.label}`
