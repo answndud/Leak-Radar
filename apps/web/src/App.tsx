@@ -497,6 +497,7 @@ export const App = () => {
   const [newSharedPresetCategory, setNewSharedPresetCategory] = useState("general");
   const [newSharedPresetDescription, setNewSharedPresetDescription] = useState("");
   const [newSharedPresetPinned, setNewSharedPresetPinned] = useState(false);
+  const [sharedPresetCategoryFilter, setSharedPresetCategoryFilter] = useState("all");
   const [sharedPresetBusy, setSharedPresetBusy] = useState(false);
   const [sharedPresetError, setSharedPresetError] = useState("");
   const presetImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -1391,6 +1392,13 @@ export const App = () => {
   };
 
   const sharedAuditPresets = sharedAuditViews.map(toSharedViewPreset);
+  const sharedCategories = useMemo(() => {
+    const set = new Set<string>();
+    for (const view of sharedAuditViews) {
+      set.add(view.category);
+    }
+    return ["all", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
+  }, [sharedAuditViews]);
   const sharedManageById = useMemo(() => {
     const map = new Map<string, boolean>();
     for (const item of sharedAuditViews) {
@@ -1412,7 +1420,10 @@ export const App = () => {
     }
     return map;
   }, [sharedAuditViews]);
-  const allAuditPresets = [...sharedAuditPresets, ...AUDIT_PRESETS, ...customAuditPresets];
+  const visibleSharedAuditPresets = sharedAuditPresets.filter((item) =>
+    sharedPresetCategoryFilter === "all" ? true : item.category === sharedPresetCategoryFilter
+  );
+  const allAuditPresets = [...visibleSharedAuditPresets, ...AUDIT_PRESETS, ...customAuditPresets];
 
   const exportCustomAuditPresets = (): void => {
     const payload = {
@@ -1549,6 +1560,18 @@ export const App = () => {
           placeholder="로그 검색"
         />
         <div className="audit-presets">
+          <select
+            className="control-field"
+            style={{ padding: "6px 8px", minWidth: "112px", fontSize: "12px" }}
+            value={sharedPresetCategoryFilter}
+            onChange={(event) => setSharedPresetCategoryFilter(event.target.value)}
+          >
+            {sharedCategories.map((category) => (
+              <option key={category} value={category}>
+                {category === "all" ? "공유 카테고리" : category}
+              </option>
+            ))}
+          </select>
           {allAuditPresets.map((preset) => (
             <span key={preset.id} className="audit-preset-item">
               <button
