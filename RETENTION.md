@@ -17,6 +17,9 @@
   - 배치 명령: `pnpm -w --filter @leak/api run audit:prune`
   - 기준값: `ADMIN_AUDIT_RETENTION_DAYS`
   - 크론 예시: `ADMIN_AUDIT_RETENTION_DAYS=180 ./infra/scripts/run-audit-prune.sh`
+- soft-delete된 공유 프리셋(`admin_audit_views.deleted_at`)은 기본 무기한 보관
+  - 운영 권장: 30일 이후 영구 삭제
+  - 기준값: `ADMIN_AUDIT_VIEW_DELETE_RETENTION_DAYS`
 
 ## 정리 기능
 API 서버에서 아래 엔드포인트를 제공합니다.

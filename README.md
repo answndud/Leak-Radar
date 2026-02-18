@@ -48,6 +48,7 @@ VITE_ADMIN_ACTOR_ID=security-ops
 API_CORS_ORIGINS=https://your-console.example.com
 KEY_FINGERPRINT_SALT=강한_랜덤_값
 ADMIN_AUDIT_RETENTION_DAYS=180
+ADMIN_AUDIT_VIEW_DELETE_RETENTION_DAYS=30
 
 # 역할 기반 키(선택): key:read|write|danger|ops;...
 ADMIN_API_KEYS=ops-key:ops|read;writer-key:read|write;danger-key:danger
@@ -104,6 +105,7 @@ pnpm -w run dev:all
 - 웹 콘솔에 공유 프리셋 변경 이력(최근 감사로그) 패널을 제공합니다.
 - 보관 정리 배치: `pnpm -w --filter @leak/api run audit:prune`
 - 크론용 래퍼: `ADMIN_AUDIT_RETENTION_DAYS=180 ./infra/scripts/run-audit-prune.sh`
+  - 공유 프리셋 soft-delete 영구삭제 기준: `ADMIN_AUDIT_VIEW_DELETE_RETENTION_DAYS`
 
 정리용:
 - `DELETE /leaks`

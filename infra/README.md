@@ -10,7 +10,8 @@ Infrastructure and deployment assets.
 ## Audit Retention Operations
 
 Prerequisite:
-- `ADMIN_AUDIT_RETENTION_DAYS` must be set (recommended 90~365)
+- `ADMIN_AUDIT_RETENTION_DAYS` for audit log pruning (recommended 90~365)
+- `ADMIN_AUDIT_VIEW_DELETE_RETENTION_DAYS` for soft-deleted shared preset purge (recommended 30)
 
 One-off run:
 ```bash

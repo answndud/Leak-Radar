@@ -141,6 +141,18 @@ export const restoreAdminAuditView = async (id: string): Promise<boolean> => {
   return (result.rowCount ?? 0) > 0;
 };
 
+export const purgeDeletedAdminAuditViews = async (retentionDays: number): Promise<number> => {
+  const days = Math.max(Math.floor(retentionDays), 1);
+  const pool = getPool();
+  const result = await pool.query(
+    `DELETE FROM admin_audit_views
+     WHERE deleted_at IS NOT NULL
+       AND deleted_at < now() - ($1 * interval '1 day')`,
+    [days]
+  );
+  return result.rowCount ?? 0;
+};
+
 export const updateAdminAuditView = async (params: {
   id: string;
   name: string;

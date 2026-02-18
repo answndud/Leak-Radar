@@ -39,7 +39,8 @@ Explore/Leaderboard 데이터를 제공하는 API 서버입니다.
   - 메타데이터: `category`, `description`, `isPinned`
   - `DELETE`는 soft-delete로 동작, `includeDeleted=1`로 조회 후 복구 가능
 - 정리 배치: `pnpm -w --filter @leak/api run audit:prune`
-  - `ADMIN_AUDIT_RETENTION_DAYS` 값(예: 180) 기준으로 만료 로그 삭제
+  - `ADMIN_AUDIT_RETENTION_DAYS` 값(예: 180) 기준으로 만료 감사로그 삭제
+  - `ADMIN_AUDIT_VIEW_DELETE_RETENTION_DAYS` 값(예: 30) 기준으로 soft-delete된 공유 프리셋 영구 삭제
 
 ## 실행
 - 개발 서버: `pnpm -w run dev:api`

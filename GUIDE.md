@@ -60,6 +60,7 @@ VITE_ADMIN_API_KEY=강한_랜덤_값
 VITE_ADMIN_ACTOR_ID=security-ops
 API_CORS_ORIGINS=http://localhost:5173
 ADMIN_AUDIT_RETENTION_DAYS=180
+ADMIN_AUDIT_VIEW_DELETE_RETENTION_DAYS=30
 
 # 역할 기반으로 분리하고 싶으면 아래 형식 사용
 ADMIN_API_KEYS=ops-key:ops|read;writer-key:read|write;danger-key:danger
