@@ -58,6 +58,7 @@ type AuditPreset = {
   category?: string;
   description?: string;
   isPinned?: boolean;
+  deletedAt?: string | null;
 };
 
 type SharedAuditView = {
@@ -79,6 +80,7 @@ type SharedAuditView = {
   createdAt: string;
   updatedAt: string;
   canManage?: boolean;
+  deletedAt: string | null;
 };
 
 type SharedPresetEditor = {
@@ -300,7 +302,8 @@ const toSharedViewPreset = (view: SharedAuditView): AuditPreset => ({
   sharedId: view.id,
   category: view.category,
   description: view.description ?? undefined,
-  isPinned: view.isPinned
+  isPinned: view.isPinned,
+  deletedAt: view.deletedAt
 });
 
 const readAdminActorId = (): string | undefined => {
@@ -513,6 +516,7 @@ export const App = () => {
   const [newSharedPresetDescription, setNewSharedPresetDescription] = useState("");
   const [newSharedPresetPinned, setNewSharedPresetPinned] = useState(false);
   const [sharedPresetCategoryFilter, setSharedPresetCategoryFilter] = useState("all");
+  const [showDeletedSharedPresets, setShowDeletedSharedPresets] = useState(false);
   const [sharedPresetBusy, setSharedPresetBusy] = useState(false);
   const [sharedPresetError, setSharedPresetError] = useState("");
   const [sharedPresetEditor, setSharedPresetEditor] = useState<SharedPresetEditor | null>(null);
@@ -666,7 +670,11 @@ export const App = () => {
 
   const loadSharedAuditViews = useCallback(async (): Promise<void> => {
     try {
-      const response = await apiFetch("/internal/audit-views");
+      const response = await apiFetch(
+        showDeletedSharedPresets
+          ? "/internal/audit-views?includeDeleted=1"
+          : "/internal/audit-views"
+      );
       if (!response.ok) {
         setSharedPresetError("공유 프리셋을 불러오지 못했습니다.");
         return;
@@ -677,7 +685,7 @@ export const App = () => {
     } catch {
       setSharedPresetError("공유 프리셋을 불러오지 못했습니다.");
     }
-  }, []);
+  }, [showDeletedSharedPresets]);
 
   useEffect(() => {
     void loadAuditLogs(undefined, false);
@@ -1372,6 +1380,23 @@ export const App = () => {
     }
   };
 
+  const restoreSharedAuditPreset = async (id: string): Promise<void> => {
+    setSharedPresetBusy(true);
+    setSharedPresetError("");
+    try {
+      const response = await apiFetch(`/internal/audit-views/${id}/restore`, { method: "POST" });
+      if (!response.ok) {
+        setSharedPresetError("공유 프리셋 복구에 실패했습니다.");
+        return;
+      }
+      await loadSharedAuditViews();
+    } catch {
+      setSharedPresetError("공유 프리셋 복구에 실패했습니다.");
+    } finally {
+      setSharedPresetBusy(false);
+    }
+  };
+
   const openSharedPresetEditor = (preset: AuditPreset): void => {
     if (!preset.sharedId) {
       return;
@@ -1629,6 +1654,14 @@ export const App = () => {
               </option>
             ))}
           </select>
+          <label className="status-note" style={{ margin: 0, display: "inline-flex", gap: "4px", alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={showDeletedSharedPresets}
+              onChange={(event) => setShowDeletedSharedPresets(event.target.checked)}
+            />
+            삭제 포함
+          </label>
           {allAuditPresets.map((preset) => (
             <span key={preset.id} className="audit-preset-item">
               <button
@@ -1637,7 +1670,7 @@ export const App = () => {
                 title={preset.shared && preset.sharedId ? `owner: ${sharedOwnerById.get(preset.sharedId) ?? "(미지정)"}` : undefined}
               >
                 {preset.shared
-                  ? `${preset.isPinned ? "📌" : "☁"} ${preset.category ? `[${preset.category}] ` : ""}${preset.label}`
+                  ? `${preset.deletedAt ? "🗃" : preset.isPinned ? "📌" : "☁"} ${preset.category ? `[${preset.category}] ` : ""}${preset.label}`
                   : preset.custom
                     ? `★ ${preset.label}`
                     : preset.label}
@@ -1669,6 +1702,16 @@ export const App = () => {
                   disabled={sharedPresetBusy || !sharedManageById.get(preset.sharedId)}
                 >
                   x
+                </button>
+              )}
+              {preset.shared && preset.sharedId && preset.deletedAt && (
+                <button
+                  className="quick-btn audit-preset-restore"
+                  onClick={() => void restoreSharedAuditPreset(preset.sharedId ?? "")}
+                  title={`${preset.label} 공유 프리셋 복구`}
+                  disabled={sharedPresetBusy || !sharedManageById.get(preset.sharedId)}
+                >
+                  ↺
                 </button>
               )}
             </span>

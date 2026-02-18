@@ -99,6 +99,7 @@ pnpm -w run dev:all
 - 공유 프리셋 API: `/internal/audit-views*` (ops 권한, 생성/수정/삭제)
   - 수정/삭제는 생성자 우선, `danger` 권한 키는 override 가능
   - 공유 프리셋 메타데이터: `category`, `description`, `isPinned`
+  - soft-delete/복구: `DELETE /internal/audit-views/:id`, `POST /internal/audit-views/:id/restore`
 - 웹 콘솔에서 공유 프리셋 편집 모달로 필터/정렬/메타데이터를 한 번에 수정 가능
 - 웹 콘솔에 공유 프리셋 변경 이력(최근 감사로그) 패널을 제공합니다.
 - 보관 정리 배치: `pnpm -w --filter @leak/api run audit:prune`

@@ -20,6 +20,7 @@ export type AdminAuditView = {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+  deletedAt: string | null;
 };
 
 type AdminAuditViewRow = {
@@ -32,6 +33,7 @@ type AdminAuditViewRow = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
 };
 
 const toFilters = (value: unknown): AdminAuditViewFilters => {
@@ -50,14 +52,18 @@ const toView = (row: AdminAuditViewRow): AdminAuditView => ({
   filters: toFilters(row.filters),
   createdBy: row.created_by,
   createdAt: row.created_at,
-  updatedAt: row.updated_at
+  updatedAt: row.updated_at,
+  deletedAt: row.deleted_at
 });
 
-export const listAdminAuditViews = async (): Promise<AdminAuditView[]> => {
+export const listAdminAuditViews = async (options?: { includeDeleted?: boolean }): Promise<AdminAuditView[]> => {
   const pool = getPool();
+  const includeDeleted = options?.includeDeleted === true;
   const result = await pool.query<AdminAuditViewRow>(
-    `SELECT id, name, category, description, is_pinned, filters, created_by, created_at::text, updated_at::text
+    `SELECT id, name, category, description, is_pinned, filters, created_by,
+            created_at::text, updated_at::text, deleted_at::text
      FROM admin_audit_views
+     ${includeDeleted ? "" : "WHERE deleted_at IS NULL"}
      ORDER BY is_pinned DESC, updated_at DESC`
   );
   return result.rows.map(toView);
@@ -78,7 +84,8 @@ export const createAdminAuditView = async (params: {
     ) VALUES (
       gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6
     )
-    RETURNING id, name, category, description, is_pinned, filters, created_by, created_at::text, updated_at::text`,
+    RETURNING id, name, category, description, is_pinned, filters, created_by,
+              created_at::text, updated_at::text, deleted_at::text`,
     [
       params.name,
       params.category,
@@ -95,7 +102,8 @@ export const createAdminAuditView = async (params: {
 export const getAdminAuditViewById = async (id: string): Promise<AdminAuditView | null> => {
   const pool = getPool();
   const result = await pool.query<AdminAuditViewRow>(
-    `SELECT id, name, category, description, is_pinned, filters, created_by, created_at::text, updated_at::text
+    `SELECT id, name, category, description, is_pinned, filters, created_by,
+            created_at::text, updated_at::text, deleted_at::text
      FROM admin_audit_views
      WHERE id = $1`,
     [id]
@@ -109,7 +117,27 @@ export const getAdminAuditViewById = async (id: string): Promise<AdminAuditView 
 
 export const deleteAdminAuditView = async (id: string): Promise<boolean> => {
   const pool = getPool();
-  const result = await pool.query("DELETE FROM admin_audit_views WHERE id = $1", [id]);
+  const result = await pool.query(
+    `UPDATE admin_audit_views
+     SET deleted_at = now(),
+         updated_at = now()
+     WHERE id = $1
+       AND deleted_at IS NULL`,
+    [id]
+  );
+  return (result.rowCount ?? 0) > 0;
+};
+
+export const restoreAdminAuditView = async (id: string): Promise<boolean> => {
+  const pool = getPool();
+  const result = await pool.query(
+    `UPDATE admin_audit_views
+     SET deleted_at = NULL,
+         updated_at = now()
+     WHERE id = $1
+       AND deleted_at IS NOT NULL`,
+    [id]
+  );
   return (result.rowCount ?? 0) > 0;
 };
 
@@ -131,7 +159,9 @@ export const updateAdminAuditView = async (params: {
          filters = $6::jsonb,
          updated_at = now()
      WHERE id = $1
-     RETURNING id, name, category, description, is_pinned, filters, created_by, created_at::text, updated_at::text`,
+       AND deleted_at IS NULL
+     RETURNING id, name, category, description, is_pinned, filters, created_by,
+               created_at::text, updated_at::text, deleted_at::text`,
     [
       params.id,
       params.name,

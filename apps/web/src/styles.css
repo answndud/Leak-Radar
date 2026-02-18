@@ -812,6 +812,12 @@ select {
   min-width: 20px;
 }
 
+.audit-preset-restore {
+  font-size: 10px;
+  padding: 4px 6px;
+  min-width: 20px;
+}
+
 .audit-table {
   width: 100%;
   border-collapse: collapse;

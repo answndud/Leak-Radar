@@ -41,19 +41,32 @@ const createMockServer = async () => {
       capturedAuditQuery = query;
       return { data: [], nextCursor: null };
     },
-    listAdminAuditViews: async () => ([
+    listAdminAuditViews: async ({ includeDeleted } = {}) => ([
       {
         id: "view-1",
         name: "failed 24h",
         category: "incident",
         description: "최근 실패",
         isPinned: true,
-        filters: { status: "failed", sinceHours: 24 },
+        filters: { status: "failed" as const, sinceHours: 24 },
         createdBy: ownerId,
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        deletedAt: null
+      },
+      {
+        id: "view-orphan",
+        name: "orphan",
+        category: "general",
+        description: null,
+        isPinned: false,
+        filters: {},
+        createdBy: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        deletedAt: includeDeleted ? new Date().toISOString() : null
       }
-    ]),
+    ].filter((item) => includeDeleted || item.deletedAt === null)),
     getAdminAuditViewById: async (id) => {
       if (id === "view-2") {
         return {
@@ -62,10 +75,11 @@ const createMockServer = async () => {
           category: "incident",
           description: "운영 실패",
           isPinned: true,
-          filters: { status: "failed", role: "ops", sinceHours: 24 },
+          filters: { status: "failed" as const, role: "ops" as const, sinceHours: 24 },
           createdBy: ownerId,
           createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          updatedAt: new Date().toISOString(),
+          deletedAt: null
         };
       }
       if (id === "view-orphan") {
@@ -78,7 +92,8 @@ const createMockServer = async () => {
           filters: {},
           createdBy: null,
           createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          updatedAt: new Date().toISOString(),
+          deletedAt: new Date().toISOString()
         };
       }
       return null;
@@ -94,10 +109,12 @@ const createMockServer = async () => {
         filters,
         createdBy: createdBy ?? null,
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        deletedAt: null
       };
     },
     deleteAdminAuditView: async (id) => id === "view-2" || id === "view-orphan",
+    restoreAdminAuditView: async (id) => id === "view-orphan",
     updateAdminAuditView: async ({ id, name, category, description, isPinned, filters }) => {
       if (id !== "view-2") {
         return null;
@@ -111,7 +128,8 @@ const createMockServer = async () => {
         filters,
         createdBy: "security-ops",
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        deletedAt: null
       };
     },
     recordAdminAudit: async () => {
@@ -279,6 +297,13 @@ const run = async (): Promise<void> => {
   });
   assert.equal(listAuditViews.statusCode, 200);
 
+  const listAuditViewsWithDeleted = await app.inject({
+    method: "GET",
+    url: "/internal/audit-views?includeDeleted=1",
+    headers: { "x-leak-radar-admin-key": "test-admin-key" }
+  });
+  assert.equal(listAuditViewsWithDeleted.statusCode, 200);
+
   const createAuditViewBad = await app.inject({
     method: "POST",
     url: "/internal/audit-views",
@@ -319,6 +344,13 @@ const run = async (): Promise<void> => {
     headers: { "x-leak-radar-admin-key": "test-admin-key" }
   });
   assert.equal(deleteAuditViewMissing.statusCode, 404);
+
+  const restoreAuditView = await app.inject({
+    method: "POST",
+    url: "/internal/audit-views/view-orphan/restore",
+    headers: { "x-leak-radar-admin-key": "test-admin-key", "x-leak-radar-admin-id": "security-ops" }
+  });
+  assert.equal(restoreAuditView.statusCode, 200);
 
   const updateAuditViewBad = await app.inject({
     method: "PATCH",
@@ -392,6 +424,13 @@ const run = async (): Promise<void> => {
     headers: { "x-leak-radar-admin-key": "danger-key", "x-leak-radar-admin-id": "incident-admin" }
   });
   assert.equal(dangerOverrideDelete.statusCode, 200);
+
+  const dangerOverrideRestore = await app.inject({
+    method: "POST",
+    url: "/internal/audit-views/view-orphan/restore",
+    headers: { "x-leak-radar-admin-key": "danger-key", "x-leak-radar-admin-id": "incident-admin" }
+  });
+  assert.equal(dangerOverrideRestore.statusCode, 200);
 
   delete process.env.ADMIN_API_KEYS;
 

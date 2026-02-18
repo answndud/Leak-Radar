@@ -33,6 +33,7 @@ import {
   deleteAdminAuditView,
   getAdminAuditViewById,
   listAdminAuditViews,
+  restoreAdminAuditView,
   updateAdminAuditView,
   type AdminAuditView,
   type AdminAuditViewFilters
@@ -63,6 +64,7 @@ type RoutesDeps = {
   getAdminAuditViewById: typeof getAdminAuditViewById;
   createAdminAuditView: typeof createAdminAuditView;
   deleteAdminAuditView: typeof deleteAdminAuditView;
+  restoreAdminAuditView: typeof restoreAdminAuditView;
   updateAdminAuditView: typeof updateAdminAuditView;
 };
 
@@ -85,6 +87,7 @@ const defaultDeps: RoutesDeps = {
   getAdminAuditViewById,
   createAdminAuditView,
   deleteAdminAuditView,
+  restoreAdminAuditView,
   updateAdminAuditView
 };
 
@@ -521,7 +524,9 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
       return;
     }
 
-    const views = await resolvedDeps.listAdminAuditViews();
+    const query = request.query as { includeDeleted?: string };
+    const includeDeleted = query.includeDeleted === "true" || query.includeDeleted === "1";
+    const views = await resolvedDeps.listAdminAuditViews({ includeDeleted });
     return {
       data: views.map((view) => ({
         ...view,
@@ -640,6 +645,64 @@ export const registerRoutes = async (app: FastifyInstance, deps?: Partial<Routes
     });
 
     return { deleted: 1 };
+  });
+
+  app.post("/internal/audit-views/:id/restore", async (request, reply) => {
+    const granted = await authorize({
+      request,
+      reply,
+      role: "ops",
+      action: "restore-admin-audit-view",
+      resource: "/internal/audit-views/:id/restore"
+    });
+    if (!granted) {
+      return;
+    }
+
+    const params = request.params as { id?: string };
+    const id = typeof params.id === "string" ? params.id : "";
+    if (!id) {
+      reply.code(400);
+      return { error: "id가 필요합니다." };
+    }
+
+    const existing = await resolvedDeps.getAdminAuditViewById(id);
+    if (!existing) {
+      reply.code(404);
+      return { error: "Audit view not found" };
+    }
+
+    if (!canManageAuditView(existing, granted)) {
+      await writeAudit({
+        request,
+        actorId: granted.actorId,
+        role: granted.role,
+        action: "restore-admin-audit-view",
+        status: "denied",
+        resource: "/internal/audit-views/:id/restore",
+        metadata: { auditViewId: id, owner: existing.createdBy }
+      });
+      reply.code(403);
+      return { error: "공유 프리셋 소유자만 복구할 수 있습니다." };
+    }
+
+    const restored = await resolvedDeps.restoreAdminAuditView(id);
+    if (!restored) {
+      reply.code(409);
+      return { error: "이미 활성 상태입니다." };
+    }
+
+    await writeAudit({
+      request,
+      actorId: granted.actorId,
+      role: granted.role,
+      action: "restore-admin-audit-view",
+      status: "allowed",
+      resource: "/internal/audit-views/:id/restore",
+      metadata: { auditViewId: id }
+    });
+
+    return { restored: 1 };
   });
 
   app.patch("/internal/audit-views/:id", async (request, reply) => {

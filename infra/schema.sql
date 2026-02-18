@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS admin_audit_views (
   category TEXT NOT NULL DEFAULT 'general',
   description TEXT,
   is_pinned BOOLEAN NOT NULL DEFAULT false,
+  deleted_at TIMESTAMPTZ,
   filters JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_by TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -101,6 +102,7 @@ CREATE TABLE IF NOT EXISTS admin_audit_views (
 ALTER TABLE admin_audit_views ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'general';
 ALTER TABLE admin_audit_views ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE admin_audit_views ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE admin_audit_views ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS admin_audit_views_updated_at
   ON admin_audit_views (updated_at DESC);
